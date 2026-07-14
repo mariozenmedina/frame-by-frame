@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security or conduct report
+    url: https://github.com/mariozenmedina/frame-by-frame/security/advisories/new
+    about: Report vulnerabilities or private Code of Conduct concerns without opening a public issue.
+  - name: Support guidance
+    url: https://github.com/mariozenmedina/frame-by-frame/blob/main/SUPPORT.md
+    about: Read where to ask project and usage questions.

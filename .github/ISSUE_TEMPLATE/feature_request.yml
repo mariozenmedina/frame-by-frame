@@ -1,0 +1,86 @@
+name: Feature proposal
+description: Propose a capability or change that fits the project's scope.
+title: "[Proposal]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the problem and desired behavior. Large implementation pull requests should wait until the direction is accepted.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor problem should be solved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe observable behavior and API shape where relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Explain workarounds or designs you considered and their trade-offs.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Public API and types
+        - Mapping and validation
+        - Controller and lifecycle
+        - Performance and scheduling
+        - Loading and caching
+        - Video or canvas rendering
+        - Accessibility
+        - Documentation
+        - Framework examples
+        - Tooling and contributor experience
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      options:
+        - No expected breaking change
+        - May require a breaking change
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Would you be interested in implementing this after the direction is accepted?
+      options:
+        - Yes
+        - No
+        - Maybe, with guidance
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and pull requests for a similar proposal.
+          required: true
+        - label: I reviewed the documented v1 scope and non-goals.
+          required: true
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

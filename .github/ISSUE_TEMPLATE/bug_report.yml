@@ -1,0 +1,83 @@
+name: Bug report
+description: Report reproducible behavior that does not match the documented contract.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve frame-by-frame. Do not use this form for security or conduct reports.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide the package version or commit SHA where the problem occurs.
+      placeholder: "Unreleased / commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Mapping and validation
+        - Controller and lifecycle
+        - Scroll scheduling
+        - Video rendering
+        - Canvas rendering
+        - Loading and caching
+        - Breakpoints and observers
+        - Types and package exports
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Link a minimal repository or provide the smallest code sample and steps that reproduce the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include relevant errors or logs with secrets and personal data removed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include browser, operating system, bundler/framework if relevant, and Node.js version used by tooling.
+      placeholder: |
+        Browser:
+        OS:
+        Bundler/framework:
+        Node.js:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and pull requests for this problem.
+          required: true
+        - label: This report does not contain a security vulnerability or private conduct concern.
+          required: true
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

@@ -1,6 +1,6 @@
 name: Feature proposal
 description: Propose a capability or change that fits the project's scope.
-title: "[Proposal]: "
+title: '[Proposal]: '
 body:
   - type: markdown
     attributes:

@@ -1,0 +1,93 @@
+{
+  "name": "@frame-by-frame/core",
+  "version": "0.0.0",
+  "description": "Framework-agnostic TypeScript library for mapping scroll position to video time.",
+  "keywords": [
+    "animation",
+    "canvas",
+    "scroll",
+    "scroll-animation",
+    "typescript",
+    "video",
+    "video-scrubbing"
+  ],
+  "homepage": "https://github.com/mariozenmedina/frame-by-frame#readme",
+  "bugs": {
+    "url": "https://github.com/mariozenmedina/frame-by-frame/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mariozenmedina/frame-by-frame.git"
+  },
+  "license": "MIT",
+  "author": "Mário Veronesi Medina",
+  "type": "module",
+  "private": true,
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./video": {
+      "types": "./dist/video.d.ts",
+      "import": "./dist/video.js",
+      "default": "./dist/video.js"
+    },
+    "./canvas": {
+      "types": "./dist/canvas.d.ts",
+      "import": "./dist/canvas.js",
+      "default": "./dist/canvas.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js",
+      "default": "./dist/types.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": "^22.18.0 || ^24.11.0"
+  },
+  "packageManager": "pnpm@11.5.3",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "browserslist": [
+    "baseline widely available"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "build:watch": "tsdown --watch",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:run && pnpm build && pnpm test:package",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:package": "node tests/package-imports.mjs",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/core": "0.18.5",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.7.0",
+    "prettier": "3.9.5",
+    "publint": "0.3.21",
+    "tsdown": "0.22.7",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10"
+  }
+}

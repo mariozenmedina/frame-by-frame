@@ -11,6 +11,8 @@ Scroll-driven video experiences often repeat the same difficult work: resolving 
 
 The planned npm package is `@frame-by-frame/core`.
 
+The repository now contains the package foundation, but the package remains private at version `0.0.0` until a usable API and release process exist.
+
 ## Design principles
 
 - **Framework agnostic:** the core uses browser APIs and an explicit lifecycle.
@@ -50,6 +52,21 @@ Development is intentionally incremental:
 7. Add `examples/vue` as the first framework example; React and other examples will be open to community pull requests.
 
 Milestone details will be tracked through GitHub Issues as implementation begins.
+
+## Development
+
+Use Node.js 24 LTS and pnpm 11 for local development. Node.js 22.18+ and 24.11+ are validated in CI.
+
+```sh
+pnpm install
+pnpm check
+```
+
+Individual commands are available for formatting, linting, type checking, tests, coverage, and builds. The build emits ESM, TypeScript declarations, and source maps, then validates the package with publint and Are the Types Wrong.
+
+Browser automation is intentionally not part of the current foundation. Browser integration suites will be added with the relevant runtime features.
+
+See [ADR 0001](docs/decisions/0001-package-foundation.md) for the package and toolchain decisions.
 
 ## Contributing
 

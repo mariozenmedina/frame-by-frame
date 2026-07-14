@@ -1,0 +1,31 @@
+# Private planning and agent instructions
+.agents/
+.codex/
+.claude/
+.cursor/
+.github/copilot-instructions.md
+AGENTS.md
+**/AGENTS.md
+CLAUDE.md
+**/CLAUDE.md
+
+# Dependencies and package-manager state
+node_modules/
+.pnpm-store/
+
+# Build, test, and tooling output
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

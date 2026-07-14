@@ -16,8 +16,11 @@ node_modules/
 # Build, test, and tooling output
 dist/
 coverage/
+.cache/
+.eslintcache
 *.tsbuildinfo
 *.log
+*.tgz
 
 # Local environment
 .env

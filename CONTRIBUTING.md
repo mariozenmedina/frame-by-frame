@@ -32,9 +32,27 @@ Describe the problem first, then the proposed behavior, alternatives, trade-offs
 
 ## Development workflow
 
-The automated toolchain is not bootstrapped yet. Reproducible setup, test, lint, type-check, and build commands will be added with the core workspace foundation. Until then, avoid adding tooling or dependencies outside an accepted implementation issue.
+Use Node.js 24 LTS and pnpm 11 for local development. The minimum validated Node.js lines are 22.18 and 24.11.
 
-When the toolchain is available, every implementation pull request is expected to:
+```sh
+pnpm install
+pnpm check
+```
+
+Useful focused commands:
+
+```sh
+pnpm format
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:coverage
+pnpm build
+```
+
+`pnpm check` is the required local quality gate. It checks formatting, typed lint rules, TypeScript, unit tests, the ESM build, package metadata, and declaration compatibility.
+
+Every implementation pull request is expected to:
 
 - include focused tests for new or changed behavior;
 - update public documentation when behavior changes;

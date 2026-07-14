@@ -1,6 +1,6 @@
 name: Bug report
 description: Report reproducible behavior that does not match the documented contract.
-title: "[Bug]: "
+title: '[Bug]: '
 body:
   - type: markdown
     attributes:
@@ -12,7 +12,7 @@ body:
     attributes:
       label: Version or commit
       description: Provide the package version or commit SHA where the problem occurs.
-      placeholder: "Unreleased / commit SHA"
+      placeholder: 'Unreleased / commit SHA'
     validations:
       required: true
 

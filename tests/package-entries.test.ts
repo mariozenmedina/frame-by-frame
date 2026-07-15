@@ -6,8 +6,12 @@ import * as types from '../src/types.js';
 import * as video from '../src/video.js';
 
 describe('package entry points', () => {
-  it('exposes the pure timeline API from the core entry point', () => {
-    expect(Object.keys(core).sort()).toEqual(['FrameByFrameError', 'createTimeline']);
+  it('exposes the controller and pure timeline APIs from the core entry point', () => {
+    expect(Object.keys(core).sort()).toEqual([
+      'FrameByFrameError',
+      'createFrameByFrame',
+      'createTimeline',
+    ]);
   });
 
   it.each([

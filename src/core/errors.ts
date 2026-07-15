@@ -1,11 +1,12 @@
 import type {
   FrameByFrameErrorCode,
   FrameByFrameErrorDetails,
+  FrameByFrameErrorInfo,
   FrameByFrameErrorOptions,
 } from '../types.js';
 
 /** An error with a stable package-specific code and structured context. */
-export class FrameByFrameError extends Error {
+export class FrameByFrameError extends Error implements FrameByFrameErrorInfo {
   override readonly name = 'FrameByFrameError' as const;
   override readonly cause: unknown;
   readonly code: FrameByFrameErrorCode;

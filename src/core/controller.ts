@@ -56,6 +56,7 @@ const EMPTY_BREAKPOINTS: readonly string[] = Object.freeze([]);
 
 const createInitialMediaState = (): VideoRendererState => ({
   loadState: 'idle',
+  loadProgress: Object.freeze({}),
   activeClipId: null,
   selectedSource: null,
   duration: null,
@@ -237,6 +238,16 @@ class Controller implements FrameByFrameController {
     ).then((): void => undefined);
   }
 
+  whenReady(): Promise<FrameByFrameState> {
+    this.#assertMediaLifecycle('whenReady()');
+    return Promise.all(
+      [...this.#bindings.values()].map((binding) => this.#getMountedRenderer(binding).whenReady()),
+    ).then((): FrameByFrameState => {
+      this.#assertNotDestroyed();
+      return this.getState();
+    });
+  }
+
   unload(bindingId?: string): void {
     this.#assertMediaLifecycle('unload()');
 
@@ -273,6 +284,14 @@ class Controller implements FrameByFrameController {
         resolution: binding.resolution === null ? null : cloneResolution(binding.resolution),
         renderer: 'video',
         loadState: media.loadState,
+        loadProgress: Object.freeze(
+          Object.fromEntries(
+            Object.entries(media.loadProgress).map(([clipId, progress]) => [
+              clipId,
+              Object.freeze({ ...progress }),
+            ]),
+          ),
+        ),
         activeClipId: media.activeClipId,
         selectedSource: media.selectedSource,
         duration: media.duration,
@@ -463,6 +482,16 @@ class Controller implements FrameByFrameController {
         this.#events.emit(event.type, {
           bindingId,
           clipId: event.clipId,
+          state: this.getState(),
+        });
+        break;
+      case 'loadprogress':
+        this.#events.emit('loadprogress', {
+          bindingId,
+          clipId: event.clipId,
+          loadedBytes: event.progress.loadedBytes,
+          totalBytes: event.progress.totalBytes,
+          ratio: event.progress.ratio,
           state: this.getState(),
         });
         break;

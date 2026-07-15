@@ -15,7 +15,13 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
           {
             id: 'intro',
             target: element as unknown as HTMLVideoElement,
-            clips: [{ id: 'intro-video', sources: [{ src: '/intro.mp4' }] }],
+            clips: [{ id: 'intro-video', sources: [{ src: '/intro.mp4' }], preload: 'full' }],
+            loading: {
+              mode: 'on-demand',
+              trigger: 'target-near-viewport',
+              rootMargin: '500px 0px',
+              credentials: 'same-origin',
+            },
             easing: 'ease-in-out',
             segments: [
               {
@@ -43,17 +49,33 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
   });
 
   void controller.load('intro');
+  void controller.whenReady();
   controller.unload('intro');
   const target: HTMLVideoElement | null = controller.getTarget('intro');
   void target;
 
   const state = controller.getState();
 
+  const ratio: number | null | undefined =
+    state.bindings['intro']?.loadProgress['intro-video']?.ratio;
+  void ratio;
+
   // @ts-expect-error: State snapshots are readonly.
   state.status = 'ready';
 
   // @ts-expect-error: Binding snapshots are readonly.
   state.bindings['intro'] = { id: 'other', axis: 'x', resolution: null };
+
+  const introState = state.bindings['intro'];
+
+  if (introState !== undefined) {
+    // @ts-expect-error: Progress snapshots are readonly.
+    introState.loadProgress['intro-video'] = {
+      loadedBytes: 0,
+      totalBytes: null,
+      ratio: null,
+    };
+  }
 
   createFrameByFrame({
     axes: {

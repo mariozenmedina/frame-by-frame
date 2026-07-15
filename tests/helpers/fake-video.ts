@@ -8,6 +8,7 @@ export class FakeVideoElement {
   readonly seekAssignments: number[] = [];
   readonly frameCallbacks = new Map<number, (now: number, metadata: object) => void>();
   readonly cancelledFrameCallbacks: number[] = [];
+  readonly ownerDocument = { baseURI: 'https://example.com/' };
   parentNode: { removeChild(child: unknown): unknown } | null = null;
   srcObject: unknown = null;
   muted = false;

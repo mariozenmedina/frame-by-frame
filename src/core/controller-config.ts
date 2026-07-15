@@ -9,6 +9,7 @@ import type {
   Timeline,
   TimelineOptions,
   VideoPreload,
+  VideoLoadingTrigger,
 } from '../types.js';
 
 export interface ControllerVideoSourceConfig {
@@ -31,6 +32,14 @@ export interface ControllerVideoOptions {
   readonly loop: boolean | undefined;
 }
 
+export interface ControllerLoadingConfig {
+  readonly mode: 'immediate' | 'on-demand';
+  readonly trigger: VideoLoadingTrigger | null;
+  readonly rootMargin: string | null;
+  readonly credentials: RequestCredentials;
+  readonly cache: RequestCache;
+}
+
 export interface ControllerBindingConfig {
   readonly id: string;
   readonly axis: AxisName;
@@ -38,6 +47,7 @@ export interface ControllerBindingConfig {
   readonly target: unknown;
   readonly mountTo: unknown;
   readonly clips: readonly ControllerVideoClipConfig[];
+  readonly loading: ControllerLoadingConfig;
   readonly video: ControllerVideoOptions;
   readonly timeEpsilon: number;
 }
@@ -55,7 +65,18 @@ export interface ControllerConfig {
 
 const AXES = ['x', 'y'] as const;
 const CROSS_ORIGIN_VALUES = ['', 'anonymous', 'use-credentials'] as const;
-const PRELOAD_VALUES = ['none', 'metadata', 'auto'] as const;
+const PRELOAD_VALUES = ['none', 'metadata', 'auto', 'full'] as const;
+const LOADING_MODES = ['immediate', 'on-demand'] as const;
+const LOADING_TRIGGERS = ['manual', 'target-near-viewport', 'first-use'] as const;
+const REQUEST_CREDENTIALS = ['omit', 'same-origin', 'include'] as const;
+const REQUEST_CACHE = [
+  'default',
+  'no-store',
+  'reload',
+  'no-cache',
+  'force-cache',
+  'only-if-cached',
+] as const;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null;
@@ -249,6 +270,81 @@ const compileVideoOptions = (value: unknown, bindingId: string): ControllerVideo
   });
 };
 
+const compileLoading = (
+  value: unknown,
+  bindingId: string,
+  clips: readonly ControllerVideoClipConfig[],
+): ControllerLoadingConfig => {
+  if (value !== undefined && !isRecord(value)) {
+    return invalidMediaConfig(bindingId, 'Loading options must be an object.', { loading: value });
+  }
+
+  const options = value ?? {};
+  const mode = options['mode'] ?? 'immediate';
+  const trigger = options['trigger'];
+  const rootMargin = options['rootMargin'];
+  const credentials = options['credentials'] ?? 'same-origin';
+  const cache = options['cache'] ?? 'default';
+
+  if (!LOADING_MODES.includes(mode as (typeof LOADING_MODES)[number])) {
+    return invalidMediaConfig(bindingId, 'Loading mode is invalid.', { mode });
+  }
+
+  if (mode === 'on-demand') {
+    if (!LOADING_TRIGGERS.includes(trigger as VideoLoadingTrigger)) {
+      return invalidMediaConfig(bindingId, 'On-demand loading requires an explicit trigger.', {
+        trigger,
+      });
+    }
+  } else if (trigger !== undefined) {
+    return invalidMediaConfig(bindingId, 'Immediate loading cannot declare a trigger.', {
+      trigger,
+    });
+  }
+
+  if (rootMargin !== undefined) {
+    if (
+      mode !== 'on-demand' ||
+      trigger !== 'target-near-viewport' ||
+      typeof rootMargin !== 'string' ||
+      rootMargin.trim().length === 0
+    ) {
+      return invalidMediaConfig(
+        bindingId,
+        'rootMargin is only valid for target-near-viewport loading.',
+        { rootMargin, trigger },
+      );
+    }
+  }
+
+  if (!REQUEST_CREDENTIALS.includes(credentials as RequestCredentials)) {
+    return invalidMediaConfig(bindingId, 'Full preload credentials are invalid.', { credentials });
+  }
+
+  if (!REQUEST_CACHE.includes(cache as RequestCache)) {
+    return invalidMediaConfig(bindingId, 'Full preload cache mode is invalid.', { cache });
+  }
+
+  const hasFullPreload = clips.some((clip) => clip.preload === 'full');
+
+  if (!hasFullPreload && (options['credentials'] !== undefined || options['cache'] !== undefined)) {
+    return invalidMediaConfig(
+      bindingId,
+      'Fetch credentials and cache options require at least one full-preload clip.',
+      { cache: options['cache'], credentials: options['credentials'] },
+    );
+  }
+
+  return Object.freeze({
+    mode: mode as 'immediate' | 'on-demand',
+    trigger: mode === 'on-demand' ? (trigger as VideoLoadingTrigger) : null,
+    rootMargin:
+      mode === 'on-demand' && trigger === 'target-near-viewport' ? (rootMargin ?? '0px') : null,
+    credentials: credentials as RequestCredentials,
+    cache: cache as RequestCache,
+  });
+};
+
 const compileTimeEpsilon = (value: unknown, bindingId: string): number => {
   if (value === undefined) {
     return 0.001;
@@ -374,6 +470,7 @@ const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig
     target: hasTarget ? value['target'] : undefined,
     mountTo: hasMountTo ? value['mountTo'] : undefined,
     clips,
+    loading: compileLoading(value['loading'], id, clips),
     video: compileVideoOptions(value['video'], id),
     timeEpsilon: compileTimeEpsilon(value['seek'], id),
   });

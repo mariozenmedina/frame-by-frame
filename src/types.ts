@@ -92,8 +92,39 @@ export type ElementReference<T extends Element = HTMLElement> = T | string | (()
 /** The native renderer implemented by the current package stage. */
 export type RendererType = 'video';
 
-/** Native browser preload hints supported by video clips. */
-export type VideoPreload = 'none' | 'metadata' | 'auto';
+/** Native hints plus explicit package-managed full-file preload. */
+export type VideoPreload = 'none' | 'metadata' | 'auto' | 'full';
+
+/** Events that may activate an on-demand media binding. */
+export type VideoLoadingTrigger = 'manual' | 'target-near-viewport' | 'first-use';
+
+/** Loading policy shared by the clips in one binding. */
+export type VideoLoadingConfig =
+  | {
+      /** Immediate loading is the default policy. */
+      readonly mode?: 'immediate';
+      readonly trigger?: never;
+      readonly rootMargin?: never;
+      /** Fetch credentials used only by clips configured with preload full. */
+      readonly credentials?: RequestCredentials;
+      /** Fetch cache mode used only by clips configured with preload full. */
+      readonly cache?: RequestCache;
+    }
+  | {
+      readonly mode: 'on-demand';
+      readonly trigger: 'target-near-viewport';
+      /** IntersectionObserver root margin; defaults to 0px. */
+      readonly rootMargin?: string;
+      readonly credentials?: RequestCredentials;
+      readonly cache?: RequestCache;
+    }
+  | {
+      readonly mode: 'on-demand';
+      readonly trigger: 'manual' | 'first-use';
+      readonly rootMargin?: never;
+      readonly credentials?: RequestCredentials;
+      readonly cache?: RequestCache;
+    };
 
 /** Valid values for the media element crossorigin attribute. */
 export type MediaCrossOrigin = '' | 'anonymous' | 'use-credentials';
@@ -142,6 +173,8 @@ export interface FrameByFrameBindingBaseConfig extends TimelineOptions {
   readonly renderer?: 'video';
   /** Non-empty logical clips referenced by timeline segments. */
   readonly clips: readonly VideoClipConfig[];
+  /** Binding-level eager or on-demand loading policy. */
+  readonly loading?: VideoLoadingConfig;
   /** Optional video property overrides. */
   readonly video?: VideoRendererConfig;
   /** Optional native seek scheduler settings. */
@@ -211,6 +244,8 @@ export interface FrameByFrameBindingState {
   readonly resolution: TimelineResolution | null;
   readonly renderer: RendererType;
   readonly loadState: VideoLoadState;
+  /** Full-preload progress keyed by clip ID. */
+  readonly loadProgress: Readonly<Record<string, VideoLoadProgress>>;
   readonly activeClipId: string | null;
   readonly selectedSource: string | null;
   readonly duration: number | null;
@@ -222,6 +257,13 @@ export interface FrameByFrameBindingState {
 
 /** Native media readiness for a controller binding. */
 export type VideoLoadState = 'idle' | 'loading' | 'metadata' | 'ready' | 'error' | 'unloaded';
+
+/** Byte progress for one explicit full-file preload. */
+export interface VideoLoadProgress {
+  readonly loadedBytes: number;
+  readonly totalBytes: number | null;
+  readonly ratio: number | null;
+}
 
 /** Detached controller state for debugging and framework integration. */
 export interface FrameByFrameState {
@@ -255,6 +297,13 @@ export interface FrameByFrameLoadedMetadataEvent extends FrameByFrameBindingEven
   readonly duration: number | null;
 }
 
+/** Full-file preload progress for one binding clip. */
+export interface FrameByFrameLoadProgressEvent extends FrameByFrameBindingEvent {
+  readonly loadedBytes: number;
+  readonly totalBytes: number | null;
+  readonly ratio: number | null;
+}
+
 /** A meaningful seek was submitted to the native video target. */
 export interface FrameByFrameSeekRequestEvent extends FrameByFrameBindingEvent {
   readonly requestedTime: number;
@@ -274,6 +323,7 @@ export interface FrameByFrameEventMap {
   readonly mount: FrameByFrameState;
   readonly update: FrameByFrameUpdateEvent;
   readonly loadstart: FrameByFrameBindingEvent;
+  readonly loadprogress: FrameByFrameLoadProgressEvent;
   readonly loadedmetadata: FrameByFrameLoadedMetadataEvent;
   readonly loadready: FrameByFrameBindingEvent;
   readonly seekrequest: FrameByFrameSeekRequestEvent;
@@ -289,6 +339,8 @@ export interface FrameByFrameController {
   enable(): void;
   disable(): void;
   load(bindingId?: string): Promise<void>;
+  /** Waits for the latest automatically scheduled media readiness cycle. */
+  whenReady(): Promise<FrameByFrameState>;
   unload(bindingId?: string): void;
   getTarget(bindingId: string): HTMLVideoElement | null;
   getState(): FrameByFrameState;
@@ -318,6 +370,7 @@ export type FrameByFrameErrorCode =
   | 'TARGET_CONFLICT'
   | 'MEDIA_SOURCE_UNSUPPORTED'
   | 'MEDIA_LOAD_FAILED'
+  | 'FULL_PRELOAD_FAILED'
   | 'MEDIA_DECODE_FAILED'
   | 'MEDIA_SEEK_FAILED';
 

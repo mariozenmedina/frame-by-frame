@@ -70,7 +70,52 @@ Use `controller.getTarget(bindingId)` to access the mounted element. It returns 
 
 Source candidates are ordered. Candidates with a declared `type` are first filtered through `canPlayType()`; candidates without a type remain eligible. If a candidate emits a native media error, the next candidate is attempted. A terminal error is attached to that binding and emitted without stopping other bindings or the scroll controller.
 
-`preload` accepts `none`, `metadata`, or `auto` and defaults to `metadata`. It is a browser hint, not a download guarantee. This stage keeps only the active clip on the video target; hidden decoder pools, full-file fetching, object URLs, and on-demand range strategies are future work.
+`preload` accepts `none`, `metadata`, `auto`, or `full` and defaults to `metadata`. The first three values are native browser hints. In particular, `auto` is not a guarantee that the entire file was downloaded.
+
+`full` is package-managed: the selected candidate is fetched into a `Blob`, an object URL is assigned to the active video, and the original source URL remains visible in state and errors. Immediate bindings prepare every full-preload clip, including inactive clips, without creating hidden video decoders. The assets remain reference-counted until `unload()` or `destroy()`.
+
+> [!WARNING]
+> Full preload may hold the downloaded `Blob`, its object URL, and browser decoder buffers at the same time. This is useful for deterministic clip transitions but can consume substantial memory, especially on mobile devices. Prefer native or on-demand loading when full-file ownership is unnecessary.
+
+Binding-level `loading` controls when work starts:
+
+```ts
+{
+  id: 'story',
+  target: '#story-video',
+  clips: [
+    {
+      id: 'intro',
+      sources: [{ src: 'https://media.example.com/intro.mp4', type: 'video/mp4' }],
+      preload: 'full',
+    },
+  ],
+  loading: {
+    mode: 'on-demand',
+    trigger: 'target-near-viewport',
+    rootMargin: '500px 0px',
+    credentials: 'omit',
+    cache: 'default',
+  },
+  segments: [{ scroll: [0, 800], clip: 'intro', media: [0, 8] }],
+}
+```
+
+Loading is `immediate` by default. On-demand mode requires one explicit trigger:
+
+- `manual`: only `controller.load(id?)` activates the binding;
+- `target-near-viewport`: a one-shot `IntersectionObserver` activates it when the target enters `rootMargin`, which defaults to `0px`;
+- `first-use`: the first non-null timeline resolution activates the currently requested clip.
+
+Immediate, viewport-triggered, and manual activation prepare all configured full clips. `first-use` prepares only the clip reached by the timeline; later clips are fetched when first selected. Native preload hints still apply only to the active clip.
+
+`credentials` and `cache` map to the corresponding Fetch API request options and are only valid when the binding has a full-preload clip. `only-if-cached` uses the Fetch-required `same-origin` mode and therefore cannot retrieve a cross-origin asset. Requests with the same resolved URL, credentials, and cache mode share one internal fetch across controllers. The request is aborted only after its last consumer releases it, and the object URL is revoked after its final reference is released.
+
+## CORS and request failures
+
+Full preload uses Fetch, so a cross-origin server must authorize the application origin with an appropriate `Access-Control-Allow-Origin` response. Setting the video's `crossOrigin` property does not bypass Fetch CORS checks.
+
+For credentialed cross-origin requests, configure `credentials: 'include'` and ensure the server permits credentials for the explicit application origin. A wildcard origin cannot be used with credentials. Network, HTTP, CORS, URL, and object-URL failures try the next playable source before producing `FULL_PRELOAD_FAILED`.
 
 Mount starts the currently resolved clip but does not wait for the network or metadata. Explicit controls are available when an application needs them:
 
@@ -81,6 +126,32 @@ await controller.load('story'); // reloads the latest resolved clip
 ```
 
 Omit the ID to affect every binding.
+
+## Readiness and loading screens
+
+`mount()` remains independent from network speed: it resolves after targets, timelines, and automatic policies are initialized. Use `whenReady()` as the aggregate barrier for a loading screen:
+
+```ts
+await controller.mount();
+
+try {
+  await controller.whenReady();
+} finally {
+  document.querySelector('#loading-screen')?.remove();
+}
+```
+
+The current readiness cycle waits for every immediate full preload. For the active native clip, `metadata` waits for `loadedmetadata`, while `auto` and `full` wait for the first `loadeddata`. `none` and on-demand work that has not been triggered do not block. Multiple callers observe the same work, and a newer media generation supersedes obsolete clip readiness. A required failure rejects with `FrameByFrameError`; use `finally` when the loading screen must also close on failure.
+
+`load()` remains the imperative operation and resolves at `loadedmetadata`. It activates manual bindings and can restart a binding after `unload()` or a failed full preload.
+
+Full preload progress is available in both state and events. `totalBytes` and `ratio` are `null` when the server omits a usable `Content-Length`:
+
+```ts
+controller.on('loadprogress', ({ bindingId, clipId, loadedBytes, totalBytes, ratio }) => {
+  updateLoadingScreen({ bindingId, clipId, loadedBytes, totalBytes, ratio });
+});
+```
 
 ## Seek scheduling
 
@@ -132,6 +203,7 @@ The package does not transcode or inspect media. Encoding, hosting, cache policy
 `getState().bindings[id]` includes:
 
 - `loadState`: `idle`, `loading`, `metadata`, `ready`, `error`, or `unloaded`;
+- `loadProgress`: full-preload byte progress keyed by clip ID;
 - `activeClipId` and `selectedSource`;
 - `duration` when finite metadata is available;
 - `appliedTime` from the latest submitted seek;

@@ -11,7 +11,7 @@ Scroll-driven video experiences often repeat the same difficult work: resolving 
 
 The planned npm package is `@frame-by-frame/core`.
 
-The repository now contains the deterministic timeline, shared scroll controller, and native video renderer. The package remains private at version `0.0.0` while the remaining v1 behavior and release process are built.
+The repository now contains the deterministic timeline, shared scroll controller, native video renderer, and advanced media-loading foundation. The package remains private at version `0.0.0` while the remaining v1 behavior and release process are built.
 
 ## Design principles
 
@@ -46,7 +46,7 @@ Development is intentionally incremental:
 
 1. Establish the public contract and deterministic mapping engine.
 2. Implement source observation, scheduling, and controller lifecycle.
-3. Add native video rendering and media loading. **Current stage.**
+3. Add native video rendering, full/on-demand loading, and aggregate readiness. **Current stage.**
 4. Add responsive behavior, accessibility preferences, and canvas rendering.
 5. Harden performance, documentation, tests, and release automation.
 6. Release the core before adding framework examples.
@@ -136,11 +136,12 @@ controller.on('frame', ({ clipId, presentedTime }) => {
 });
 
 await controller.mount();
+await controller.whenReady(); // useful for an application loading screen
 ```
 
 Controllers sharing a canonical scroll source also share one passive scroll listener and at most one pending animation frame. The raw scroll handler performs no metric reads; each animation frame distributes one scroll snapshot to every subscriber.
 
-The native renderer resolves or creates one `HTMLVideoElement` per binding, selects ordered source candidates, and writes precise `currentTime` seeks. While a seek is in flight, only the latest pending target is retained. When available, `requestVideoFrameCallback()` reports the composed frame; other browsers use native media events as an approximation.
+The native renderer resolves or creates one `HTMLVideoElement` per binding, selects ordered source candidates, and writes precise `currentTime` seeks. It supports native hints, explicit full-file preload with a shared reference-counted cache, and manual, viewport, or first-use activation. `whenReady()` provides one aggregate Promise for loading-screen orchestration, while `loadprogress` exposes byte progress when available. While a seek is in flight, only the latest pending target is retained. When available, `requestVideoFrameCallback()` reports the composed frame; other browsers use native media events as an approximation.
 
 Read the [controller API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/controller.md) for source resolution, lifecycle, state, events, errors, and scheduling behavior, and the [native video guide](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/video.md) for targets, clips, loading, seeking, and cleanup.
 
@@ -157,7 +158,7 @@ Individual commands are available for formatting, linting, type checking, tests,
 
 Native media behavior is covered with deterministic structural fakes in Node. Browser validation remains a manual operator step because codec, decoder, and frame-presentation behavior varies by runtime and media asset.
 
-See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, and [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling.
+See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling, and [ADR 0005](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0005-advanced-media-loading.md) for full preload, on-demand policies, cache ownership, and readiness coordination.
 
 ## Contributing
 

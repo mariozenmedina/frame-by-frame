@@ -79,6 +79,7 @@ interface FrameByFrameBindingBaseConfig extends TimelineOptions {
   readonly id: string;
   readonly renderer?: 'video';
   readonly clips: readonly VideoClipConfig[];
+  readonly loading?: VideoLoadingConfig;
   readonly video?: {
     readonly muted?: boolean;
     readonly playsInline?: boolean;
@@ -126,18 +127,19 @@ When the final subscriber disables or destroys itself, the listener is removed a
 
 ## Lifecycle
 
-| Method          | Behavior                                                                                                                                                                                                                                                   |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mount()`       | Resolves the source and all video targets, refreshes metrics, starts the initially selected clips without waiting for metadata, subscribes if enabled, and emits `mount` then `update`. Concurrent calls share one promise; a failed mount may be retried. |
-| `refresh()`     | Recalculates maximum ranges and synchronizes current positions. It requires a successful mount, including while disabled.                                                                                                                                  |
-| `disable()`     | Stops this controller's scroll updates without unloading media or destroying its configuration. It may be called before mount.                                                                                                                             |
-| `enable()`      | Resynchronizes a mounted disabled controller and subscribes it again.                                                                                                                                                                                      |
-| `load(id?)`     | Enables loading and resolves after `loadedmetadata` for one binding or all bindings. Calling it after `unload()` reloads the latest resolved clip.                                                                                                         |
-| `unload(id?)`   | Cancels pending media work, clears native sources, and prevents implicit reload until `load()` is called.                                                                                                                                                  |
-| `getTarget(id)` | Returns the mounted `HTMLVideoElement`, or `null` before mount.                                                                                                                                                                                            |
-| `getState()`    | Returns a detached read-only snapshot and remains available after destruction.                                                                                                                                                                             |
-| `on()`          | Adds a typed event listener and returns an idempotent unsubscribe function.                                                                                                                                                                                |
-| `destroy()`     | Unsubscribes, cancels pending source/seek/frame work, restores supplied targets, removes created targets, releases ownership, emits `destroy`, and removes listeners. It is synchronous and idempotent.                                                    |
+| Method          | Behavior                                                                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mount()`       | Resolves the source and all video targets, refreshes metrics, starts configured automatic media work without waiting for it, subscribes if enabled, and emits `mount` then `update`. Concurrent calls share one promise; a failed mount may be retried. |
+| `refresh()`     | Recalculates maximum ranges and synchronizes current positions. It requires a successful mount, including while disabled.                                                                                                                               |
+| `disable()`     | Stops this controller's scroll updates without unloading media or destroying its configuration. It may be called before mount.                                                                                                                          |
+| `enable()`      | Resynchronizes a mounted disabled controller and subscribes it again.                                                                                                                                                                                   |
+| `load(id?)`     | Enables loading and resolves after `loadedmetadata` for one binding or all bindings. Calling it after `unload()` reloads the latest resolved clip.                                                                                                      |
+| `whenReady()`   | Resolves with the latest state after all currently required automatic media work is ready. Untriggered on-demand work and `preload: 'none'` do not block it.                                                                                            |
+| `unload(id?)`   | Cancels pending media work, clears native sources, and prevents implicit reload until `load()` is called.                                                                                                                                               |
+| `getTarget(id)` | Returns the mounted `HTMLVideoElement`, or `null` before mount.                                                                                                                                                                                         |
+| `getState()`    | Returns a detached read-only snapshot and remains available after destruction.                                                                                                                                                                          |
+| `on()`          | Adds a typed event listener and returns an idempotent unsubscribe function.                                                                                                                                                                             |
+| `destroy()`     | Unsubscribes, cancels pending source/seek/frame work, restores supplied targets, removes created targets, releases ownership, emits `destroy`, and removes listeners. It is synchronous and idempotent.                                                 |
 
 The status is one of `idle`, `mounting`, `ready`, `disabled`, `error`, or `destroyed`. After destruction, every operation except `getState()` and repeated `destroy()` throws `CONTROLLER_DESTROYED`.
 
@@ -155,7 +157,7 @@ interface FrameByFrameState {
 }
 ```
 
-Axis state contains `enabled`, `offset`, `max`, and `progress`. Binding state contains its `id`, axis, `TimelineResolution | null`, renderer type, load state, active clip and source, known duration, applied and presented times, seeking flag, and binding-scoped media error. Snapshots and their collections are detached from controller internals.
+Axis state contains `enabled`, `offset`, `max`, and `progress`. Binding state contains its `id`, axis, `TimelineResolution | null`, renderer type, load state, full-preload progress by clip ID, active clip and source, known duration, applied and presented times, seeking flag, and binding-scoped media error. Snapshots and their collections are detached from controller internals.
 
 `activeBreakpoints` is an empty reserved field until responsive overrides are implemented. Media failures are stored on the affected binding. They emit `error` but do not change the controller status or `lastError`; controller/source/mapping failures do.
 
@@ -166,6 +168,7 @@ Axis state contains `enabled`, `offset`, `max`, and `progress`. Binding state co
 | `mount`          | The first successfully mounted state snapshot.                                                            |
 | `update`         | `{ reason, state }`, where reason is `mount`, `scroll`, `refresh`, `enable`, or `disable`.                |
 | `loadstart`      | Binding and clip identity plus current state after a source candidate starts.                             |
+| `loadprogress`   | Binding and clip identity, loaded bytes, nullable total/ratio, and current state.                         |
 | `loadedmetadata` | Binding and clip identity, duration, and current state.                                                   |
 | `loadready`      | Binding and clip identity plus current state after native `loadeddata`.                                   |
 | `seekrequest`    | Binding and clip identity, requested timeline time, bounded target time, and current state.               |
@@ -193,6 +196,7 @@ The controller adds these stable `FrameByFrameError` codes:
 | `TARGET_CONFLICT`             | Another mounted binding already owns the same video target.                           |
 | `MEDIA_SOURCE_UNSUPPORTED`    | No candidate source can be used for the selected clip.                                |
 | `MEDIA_LOAD_FAILED`           | All candidates failed while loading.                                                  |
+| `FULL_PRELOAD_FAILED`         | Every playable source failed during explicit full-file fetch or object-URL setup.     |
 | `MEDIA_DECODE_FAILED`         | The native decoder rejected the selected media.                                       |
 | `MEDIA_SEEK_FAILED`           | The native video target rejected a precise `currentTime` assignment.                  |
 

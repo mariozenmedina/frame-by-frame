@@ -1,4 +1,5 @@
 import { FrameByFrameError } from '../core/errors.js';
+import { AssetCache } from './asset-cache.js';
 
 import type {
   ControllerBindingConfig,
@@ -6,7 +7,8 @@ import type {
   ControllerVideoSourceConfig,
 } from '../core/controller-config.js';
 import type { ResolvedVideoTarget } from './video-target.js';
-import type { TimelineResolution, VideoLoadState } from '../types.js';
+import type { AssetConsumer, AssetLoadProgress, LoadedAsset } from './asset-cache.js';
+import type { TimelineResolution, VideoLoadProgress, VideoLoadState } from '../types.js';
 
 interface DesiredMediaTarget {
   readonly clipId: string;
@@ -44,9 +46,37 @@ interface LoadWaiter {
   readonly reject: (error: FrameByFrameError) => void;
 }
 
+interface ReadinessWaiter extends LoadWaiter {
+  readonly clipId: string;
+  readonly state: 'metadata' | 'ready';
+}
+
+interface PreparedFullAsset {
+  readonly asset: LoadedAsset;
+  readonly source: ControllerVideoSourceConfig;
+  readonly sourceIndex: number;
+}
+
+interface FullAssetPreparation {
+  readonly clipId: string;
+  consumer: AssetConsumer | null;
+  result: Promise<PreparedFullAsset>;
+}
+
+export interface VideoRendererDependencies {
+  readonly assetCache: AssetCache;
+  readonly resolveUrl: (source: string, target: HTMLVideoElement) => string;
+  readonly observeNearViewport: (
+    target: HTMLVideoElement,
+    rootMargin: string,
+    onEnter: () => void,
+  ) => () => void;
+}
+
 /** Detached media state consumed by controller snapshots. */
 export interface VideoRendererState {
   readonly loadState: VideoLoadState;
+  readonly loadProgress: Readonly<Record<string, VideoLoadProgress>>;
   readonly activeClipId: string | null;
   readonly selectedSource: string | null;
   readonly duration: number | null;
@@ -60,6 +90,11 @@ export type VideoRendererEvent =
   | {
       readonly type: 'loadstart';
       readonly clipId: string;
+    }
+  | {
+      readonly type: 'loadprogress';
+      readonly clipId: string;
+      readonly progress: VideoLoadProgress;
     }
   | {
       readonly type: 'loadedmetadata';
@@ -92,6 +127,7 @@ export type VideoRendererEvent =
 export interface VideoRenderer {
   setResolution(resolution: TimelineResolution | null): void;
   load(): Promise<void>;
+  whenReady(): Promise<void>;
   unload(): void;
   getTarget(): HTMLVideoElement;
   getState(): VideoRendererState;
@@ -102,6 +138,42 @@ export type VideoRendererFactory = (
   config: ControllerBindingConfig,
   onEvent: (event: VideoRendererEvent) => void,
 ) => VideoRenderer;
+
+const defaultAssetCache = new AssetCache({
+  fetch: (url, init) => globalThis.fetch(url, init),
+  createObjectURL: (blob) => globalThis.URL.createObjectURL(blob),
+  revokeObjectURL: (url) => {
+    globalThis.URL.revokeObjectURL(url);
+  },
+});
+
+const defaultDependencies: VideoRendererDependencies = {
+  assetCache: defaultAssetCache,
+  resolveUrl: (source, target) => {
+    return new URL(source, target.ownerDocument.baseURI).href;
+  },
+  observeNearViewport: (target, rootMargin, onEnter) => {
+    if (typeof globalThis.IntersectionObserver !== 'function') {
+      throw new FrameByFrameError(
+        'ENVIRONMENT_UNAVAILABLE',
+        'IntersectionObserver is required by target-near-viewport loading.',
+      );
+    }
+
+    const observer = new globalThis.IntersectionObserver(
+      (entries): void => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onEnter();
+        }
+      },
+      { root: null, rootMargin },
+    );
+    observer.observe(target);
+    return (): void => {
+      observer.disconnect();
+    };
+  },
+};
 
 const SNAPSHOT_ATTRIBUTES = [
   'src',
@@ -205,7 +277,11 @@ const configureTarget = (
 
 const createError = (
   code:
-    'MEDIA_SOURCE_UNSUPPORTED' | 'MEDIA_LOAD_FAILED' | 'MEDIA_DECODE_FAILED' | 'MEDIA_SEEK_FAILED',
+    | 'MEDIA_SOURCE_UNSUPPORTED'
+    | 'MEDIA_LOAD_FAILED'
+    | 'MEDIA_DECODE_FAILED'
+    | 'MEDIA_SEEK_FAILED'
+    | 'FULL_PRELOAD_FAILED',
   message: string,
   bindingId: string,
   clipId: string | null,
@@ -228,6 +304,10 @@ class NativeVideoRenderer implements VideoRenderer {
   readonly #onEvent: (event: VideoRendererEvent) => void;
   readonly #snapshot: TargetSnapshot | null;
   readonly #waiters = new Set<LoadWaiter>();
+  readonly #readinessWaiters = new Set<ReadinessWaiter>();
+  readonly #dependencies: VideoRendererDependencies;
+  readonly #fullAssets = new Map<string, FullAssetPreparation>();
+  readonly #loadProgress = new Map<string, VideoLoadProgress>();
 
   #loadState: VideoLoadState = 'idle';
   #activeClipId: string | null = null;
@@ -238,7 +318,7 @@ class NativeVideoRenderer implements VideoRenderer {
   #seeking = false;
   #error: FrameByFrameError | null = null;
   #desired: DesiredMediaTarget | null = null;
-  #autoLoad = true;
+  #autoLoad: boolean;
   #destroyed = false;
   #generation = 0;
   #candidateSources: readonly ControllerVideoSourceConfig[] = [];
@@ -248,18 +328,45 @@ class NativeVideoRenderer implements VideoRenderer {
   #pendingSeek: DesiredMediaTarget | null = null;
   #frameHandle: number | null = null;
   #frameToken = 0;
+  #readinessGeneration = 0;
+  #stopObserving: (() => void) | null = null;
 
   constructor(
     config: ControllerBindingConfig,
     handle: ResolvedVideoTarget,
     onEvent: (event: VideoRendererEvent) => void,
+    dependencies: VideoRendererDependencies,
   ) {
     this.#config = config;
     this.#handle = handle;
     this.#target = handle.target;
     this.#onEvent = onEvent;
+    this.#dependencies = dependencies;
     this.#snapshot = handle.owned ? null : snapshotTarget(this.#target);
     configureTarget(this.#target, config, handle.owned);
+    this.#autoLoad = config.loading.mode === 'immediate';
+
+    if (this.#autoLoad) {
+      this.#prepareAllFullClips();
+    } else if (config.loading.trigger === 'target-near-viewport') {
+      try {
+        this.#stopObserving = dependencies.observeNearViewport(
+          this.#target,
+          config.loading.rootMargin ?? '0px',
+          (): void => {
+            this.#activate(true, true);
+          },
+        );
+      } catch (cause) {
+        throw cause instanceof FrameByFrameError
+          ? cause
+          : new FrameByFrameError(
+              'ENVIRONMENT_UNAVAILABLE',
+              'The target-near-viewport observer could not be created.',
+              { cause, details: { bindingId: config.id } },
+            );
+      }
+    }
   }
 
   setResolution(resolution: TimelineResolution | null): void {
@@ -281,6 +388,19 @@ class NativeVideoRenderer implements VideoRenderer {
     const clipChanged = this.#desired?.clipId !== clipId;
     this.#desired = desired;
 
+    if (
+      !this.#autoLoad &&
+      this.#config.loading.mode === 'on-demand' &&
+      this.#config.loading.trigger === 'first-use' &&
+      this.#loadState !== 'unloaded'
+    ) {
+      this.#activate(false, false);
+    }
+
+    if (clipChanged) {
+      this.#supersedeReadiness();
+    }
+
     if (!this.#autoLoad || this.#loadState === 'unloaded') {
       return;
     }
@@ -297,7 +417,12 @@ class NativeVideoRenderer implements VideoRenderer {
 
   load(): Promise<void> {
     this.#assertNotDestroyed();
-    this.#autoLoad = true;
+
+    if (this.#error?.code === 'FULL_PRELOAD_FAILED' && this.#desired !== null) {
+      this.#discardFullAsset(this.#desired.clipId);
+    }
+
+    this.#activate(true);
 
     if (this.#desired === null) {
       const soleClip = this.#config.clips[0];
@@ -340,9 +465,33 @@ class NativeVideoRenderer implements VideoRenderer {
     return promise;
   }
 
+  async whenReady(): Promise<void> {
+    this.#assertNotDestroyed();
+
+    for (;;) {
+      const generation = this.#readinessGeneration;
+      const tasks = this.#readinessTasks();
+      await Promise.all(tasks);
+
+      if (this.#destroyed) {
+        throw new FrameByFrameError(
+          'CONTROLLER_DESTROYED',
+          'The controller was destroyed while media readiness was pending.',
+          { details: { bindingId: this.#config.id } },
+        );
+      }
+
+      if (generation === this.#readinessGeneration) {
+        return;
+      }
+    }
+  }
+
   unload(): void {
     this.#assertNotDestroyed();
     this.#autoLoad = false;
+    this.#stopObserving?.();
+    this.#stopObserving = null;
     this.#rejectWaiters(
       createError(
         'MEDIA_LOAD_FAILED',
@@ -352,6 +501,8 @@ class NativeVideoRenderer implements VideoRenderer {
         this.#selectedSource,
       ),
     );
+    this.#supersedeReadiness();
+    this.#releaseFullAssets();
     this.#resetSource('unloaded');
   }
 
@@ -363,6 +514,7 @@ class NativeVideoRenderer implements VideoRenderer {
   getState(): VideoRendererState {
     return {
       loadState: this.#loadState,
+      loadProgress: Object.freeze(Object.fromEntries(this.#loadProgress)),
       activeClipId: this.#activeClipId,
       selectedSource: this.#selectedSource,
       duration: this.#duration,
@@ -380,6 +532,8 @@ class NativeVideoRenderer implements VideoRenderer {
 
     this.#destroyed = true;
     this.#autoLoad = false;
+    this.#stopObserving?.();
+    this.#stopObserving = null;
     this.#rejectWaiters(
       new FrameByFrameError(
         'CONTROLLER_DESTROYED',
@@ -387,6 +541,14 @@ class NativeVideoRenderer implements VideoRenderer {
         { details: { bindingId: this.#config.id } },
       ),
     );
+    this.#rejectReadinessWaiters(
+      new FrameByFrameError(
+        'CONTROLLER_DESTROYED',
+        'The controller was destroyed while media readiness was pending.',
+        { details: { bindingId: this.#config.id } },
+      ),
+    );
+    this.#releaseFullAssets();
     this.#resetSource('unloaded');
 
     try {
@@ -396,6 +558,253 @@ class NativeVideoRenderer implements VideoRenderer {
     } finally {
       this.#handle.release();
     }
+  }
+
+  #activate(prepareAllFullClips: boolean, beginDesired = true): void {
+    const changed = !this.#autoLoad;
+    this.#autoLoad = true;
+    this.#stopObserving?.();
+    this.#stopObserving = null;
+
+    if (changed) {
+      this.#supersedeReadiness();
+    }
+
+    if (prepareAllFullClips) {
+      this.#prepareAllFullClips();
+    }
+
+    if (
+      beginDesired &&
+      this.#desired !== null &&
+      (changed ||
+        this.#activeClipId !== this.#desired.clipId ||
+        this.#loadState === 'idle' ||
+        this.#loadState === 'unloaded' ||
+        this.#loadState === 'error')
+    ) {
+      this.#beginDesiredClip();
+    }
+  }
+
+  #prepareAllFullClips(): void {
+    for (const clip of this.#config.clips) {
+      if (clip.preload === 'full') {
+        const preparation = this.#ensureFullAsset(clip, 0);
+        void preparation.result.catch((): void => undefined);
+      }
+    }
+  }
+
+  #ensureFullAsset(clip: ControllerVideoClipConfig, startIndex: number): FullAssetPreparation {
+    const current = this.#fullAssets.get(clip.id);
+
+    if (current !== undefined) {
+      return current;
+    }
+
+    const candidates = this.#playableSources(clip);
+    const preparation: FullAssetPreparation = {
+      clipId: clip.id,
+      consumer: null,
+      result: Promise.resolve(null as never),
+    };
+    preparation.result = this.#loadFullAssetCandidates(
+      preparation,
+      clip,
+      candidates,
+      startIndex,
+    ).catch((cause: unknown): never => {
+      const error =
+        cause instanceof FrameByFrameError
+          ? cause
+          : createError(
+              'FULL_PRELOAD_FAILED',
+              `Every full-preload source failed for video clip "${clip.id}".`,
+              this.#config.id,
+              clip.id,
+              candidates.at(-1)?.src ?? null,
+              cause,
+            );
+
+      if (this.#fullAssets.get(clip.id) === preparation && !this.#destroyed) {
+        this.#error = error;
+        this.#emit({ type: 'error', error });
+      }
+
+      throw error;
+    });
+    this.#fullAssets.set(clip.id, preparation);
+    return preparation;
+  }
+
+  async #loadFullAssetCandidates(
+    preparation: FullAssetPreparation,
+    clip: ControllerVideoClipConfig,
+    candidates: readonly ControllerVideoSourceConfig[],
+    startIndex: number,
+  ): Promise<PreparedFullAsset> {
+    let lastCause: unknown;
+
+    for (let sourceIndex = startIndex; sourceIndex < candidates.length; sourceIndex += 1) {
+      const source = candidates[sourceIndex];
+
+      if (source === undefined) {
+        continue;
+      }
+
+      try {
+        const url = this.#dependencies.resolveUrl(source.src, this.#target);
+        const consumer = this.#dependencies.assetCache.acquire(
+          {
+            url,
+            credentials: this.#config.loading.credentials,
+            cache: this.#config.loading.cache,
+          },
+          (progress): void => {
+            if (this.#fullAssets.get(clip.id) === preparation) {
+              this.#publishProgress(clip.id, progress);
+            }
+          },
+        );
+        preparation.consumer = consumer;
+
+        try {
+          const asset = await consumer.result;
+          return Object.freeze({ asset, source, sourceIndex });
+        } catch (cause) {
+          lastCause = cause;
+          consumer.release();
+          preparation.consumer = null;
+        }
+      } catch (cause) {
+        lastCause = cause;
+      }
+    }
+
+    throw createError(
+      'FULL_PRELOAD_FAILED',
+      `Every full-preload source failed for video clip "${clip.id}".`,
+      this.#config.id,
+      clip.id,
+      candidates.at(-1)?.src ?? null,
+      lastCause,
+    );
+  }
+
+  #publishProgress(clipId: string, progress: AssetLoadProgress): void {
+    const snapshot = Object.freeze({ ...progress });
+    this.#loadProgress.set(clipId, snapshot);
+    this.#emit({ type: 'loadprogress', clipId, progress: snapshot });
+  }
+
+  #releaseFullAssets(): void {
+    for (const preparation of this.#fullAssets.values()) {
+      preparation.consumer?.release();
+    }
+
+    this.#fullAssets.clear();
+    this.#loadProgress.clear();
+  }
+
+  #discardFullAsset(clipId: string): void {
+    const preparation = this.#fullAssets.get(clipId);
+    preparation?.consumer?.release();
+    this.#fullAssets.delete(clipId);
+    this.#loadProgress.delete(clipId);
+  }
+
+  #readinessTasks(): Promise<unknown>[] {
+    if (!this.#autoLoad) {
+      return [];
+    }
+
+    const tasks: Promise<unknown>[] = [...this.#fullAssets.values()].map(
+      (preparation) => preparation.result,
+    );
+    const desired = this.#desired;
+
+    if (desired === null) {
+      return tasks;
+    }
+
+    const clip = this.#config.clips.find((candidate) => candidate.id === desired.clipId);
+
+    if (clip === undefined || clip.preload === 'none') {
+      return tasks;
+    }
+
+    if (clip.preload === 'full') {
+      const preparation = this.#ensureFullAsset(clip, 0);
+
+      if (!tasks.includes(preparation.result)) {
+        tasks.push(preparation.result);
+      }
+    }
+
+    tasks.push(this.#waitForReadiness(clip.id, clip.preload === 'metadata' ? 'metadata' : 'ready'));
+    return tasks;
+  }
+
+  #waitForReadiness(clipId: string, state: 'metadata' | 'ready'): Promise<void> {
+    if (this.#activeClipId === clipId && this.#hasReadiness(state)) {
+      return Promise.resolve();
+    }
+
+    if (this.#activeClipId === clipId && this.#loadState === 'error' && this.#error !== null) {
+      return Promise.reject(this.#error);
+    }
+
+    return new Promise<void>((resolve, reject): void => {
+      this.#readinessWaiters.add({ clipId, state, resolve, reject });
+    });
+  }
+
+  #hasReadiness(state: 'metadata' | 'ready'): boolean {
+    return state === 'metadata'
+      ? this.#loadState === 'metadata' || this.#loadState === 'ready'
+      : this.#loadState === 'ready';
+  }
+
+  #resolveReadinessWaiters(): void {
+    for (const waiter of this.#readinessWaiters) {
+      if (waiter.clipId === this.#activeClipId && this.#hasReadiness(waiter.state)) {
+        waiter.resolve();
+        this.#readinessWaiters.delete(waiter);
+      }
+    }
+  }
+
+  #supersedeReadiness(): void {
+    this.#readinessGeneration += 1;
+
+    for (const waiter of this.#readinessWaiters) {
+      waiter.resolve();
+    }
+
+    this.#readinessWaiters.clear();
+  }
+
+  #rejectReadinessWaiters(error: FrameByFrameError): void {
+    for (const waiter of this.#readinessWaiters) {
+      waiter.reject(error);
+    }
+
+    this.#readinessWaiters.clear();
+  }
+
+  #playableSources(clip: ControllerVideoClipConfig): readonly ControllerVideoSourceConfig[] {
+    return clip.sources.filter((source) => {
+      if (source.type === null) {
+        return true;
+      }
+
+      try {
+        return this.#target.canPlayType(source.type) !== '';
+      } catch {
+        return false;
+      }
+    });
   }
 
   #beginDesiredClip(): void {
@@ -420,17 +829,7 @@ class NativeVideoRenderer implements VideoRenderer {
       return;
     }
 
-    const candidates = clip.sources.filter((source) => {
-      if (source.type === null) {
-        return true;
-      }
-
-      try {
-        return this.#target.canPlayType(source.type) !== '';
-      } catch {
-        return false;
-      }
-    });
+    const candidates = this.#playableSources(clip);
 
     if (candidates.length === 0) {
       this.#fail(
@@ -447,7 +846,51 @@ class NativeVideoRenderer implements VideoRenderer {
 
     this.#candidateSources = candidates;
     this.#candidateIndex = 0;
-    this.#startCandidate(clip, candidates[0]);
+
+    if (clip.preload === 'full') {
+      this.#startFullCandidate(clip, 0);
+    } else {
+      this.#startCandidate(clip, candidates[0]);
+    }
+  }
+
+  #startFullCandidate(clip: ControllerVideoClipConfig, startIndex: number): void {
+    const source = this.#candidateSources[startIndex];
+
+    if (source === undefined || this.#destroyed) {
+      return;
+    }
+
+    const generation = this.#prepareCandidate(clip, source);
+    const preparation = this.#ensureFullAsset(clip, startIndex);
+    void preparation.result.then(
+      (prepared): void => {
+        if (!this.#isCurrentGeneration(generation)) {
+          return;
+        }
+
+        this.#candidateIndex = prepared.sourceIndex;
+        this.#selectedSource = prepared.source.src;
+        this.#loadTargetSource(prepared.asset.objectUrl, generation);
+      },
+      (error: unknown): void => {
+        const packageError =
+          error instanceof FrameByFrameError
+            ? error
+            : createError(
+                'FULL_PRELOAD_FAILED',
+                `Full preload failed for video clip "${clip.id}".`,
+                this.#config.id,
+                clip.id,
+                source.src,
+                error,
+              );
+
+        if (this.#isCurrentGeneration(generation)) {
+          this.#fail(packageError, this.#error !== packageError);
+        }
+      },
+    );
   }
 
   #startCandidate(
@@ -458,6 +901,11 @@ class NativeVideoRenderer implements VideoRenderer {
       return;
     }
 
+    const generation = this.#prepareCandidate(clip, source);
+    this.#loadTargetSource(source.src, generation);
+  }
+
+  #prepareCandidate(clip: ControllerVideoClipConfig, source: ControllerVideoSourceConfig): number {
     const generation = ++this.#generation;
     this.#cancelFrameObservation();
     this.#removeSourceListeners?.();
@@ -472,22 +920,26 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#presentedTime = null;
     this.#error = null;
     this.#loadState = 'loading';
-    this.#attachSourceListeners(generation);
     this.#applyClipAttributes(clip);
+    this.#emit({ type: 'loadstart', clipId: clip.id });
+    return generation;
+  }
+
+  #loadTargetSource(targetSource: string, generation: number): void {
+    this.#attachSourceListeners(generation);
 
     try {
       this.#target.pause();
       this.#target.srcObject = null;
-      this.#target.setAttribute('src', source.src);
+      this.#target.setAttribute('src', targetSource);
       this.#target.load();
-      this.#emit({ type: 'loadstart', clipId: clip.id });
     } catch (cause) {
       this.#handleSourceFailure(generation, cause);
     }
   }
 
   #applyClipAttributes(clip: ControllerVideoClipConfig): void {
-    this.#target.preload = clip.preload;
+    this.#target.preload = clip.preload === 'full' ? 'auto' : clip.preload;
 
     if (clip.poster === null) {
       this.#target.removeAttribute('poster');
@@ -549,6 +1001,7 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#error = null;
     this.#emit({ type: 'loadedmetadata', clipId, duration: this.#duration });
     this.#resolveWaiters();
+    this.#resolveReadinessWaiters();
 
     if (this.#desired?.clipId === clipId) {
       this.#requestSeek(this.#desired);
@@ -564,6 +1017,7 @@ class NativeVideoRenderer implements VideoRenderer {
 
     this.#loadState = 'ready';
     this.#emit({ type: 'loadready', clipId });
+    this.#resolveReadinessWaiters();
 
     if (this.#supportsVideoFrameCallback()) {
       this.#scheduleFrameObservation();
@@ -712,7 +1166,13 @@ class NativeVideoRenderer implements VideoRenderer {
 
     if (clip !== undefined && nextIndex < this.#candidateSources.length) {
       this.#candidateIndex = nextIndex;
-      this.#startCandidate(clip, this.#candidateSources[nextIndex]);
+
+      if (clip.preload === 'full') {
+        this.#discardFullAsset(clip.id);
+        this.#startFullCandidate(clip, nextIndex);
+      } else {
+        this.#startCandidate(clip, this.#candidateSources[nextIndex]);
+      }
       return;
     }
 
@@ -739,7 +1199,7 @@ class NativeVideoRenderer implements VideoRenderer {
     );
   }
 
-  #fail(error: FrameByFrameError): void {
+  #fail(error: FrameByFrameError, emit = true): void {
     ++this.#generation;
     this.#cancelFrameObservation();
     this.#removeSourceListeners?.();
@@ -750,7 +1210,11 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#loadState = 'error';
     this.#error = error;
     this.#rejectWaiters(error);
-    this.#emit({ type: 'error', error });
+    this.#rejectReadinessWaiters(error);
+
+    if (emit) {
+      this.#emit({ type: 'error', error });
+    }
   }
 
   #resetSource(loadState: 'unloaded'): void {
@@ -847,4 +1311,5 @@ export const createNativeVideoRenderer = (
   config: ControllerBindingConfig,
   handle: ResolvedVideoTarget,
   onEvent: (event: VideoRendererEvent) => void,
-): VideoRenderer => new NativeVideoRenderer(config, handle, onEvent);
+  dependencies: VideoRendererDependencies = defaultDependencies,
+): VideoRenderer => new NativeVideoRenderer(config, handle, onEvent, dependencies);

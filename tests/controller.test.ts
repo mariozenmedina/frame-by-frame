@@ -75,8 +75,11 @@ class TestVideoRenderer implements VideoRenderer {
   loadCalls = 0;
   unloadCalls = 0;
   destroyCalls = 0;
+  whenReadyCalls = 0;
+  readiness: Promise<void> = Promise.resolve();
   state: VideoRendererState = {
     loadState: 'idle',
+    loadProgress: Object.freeze({}),
     activeClipId: null,
     selectedSource: null,
     duration: null,
@@ -98,6 +101,11 @@ class TestVideoRenderer implements VideoRenderer {
   load(): Promise<void> {
     this.loadCalls += 1;
     return Promise.resolve();
+  }
+
+  whenReady(): Promise<void> {
+    this.whenReadyCalls += 1;
+    return this.readiness;
   }
 
   unload(): void {
@@ -331,6 +339,9 @@ describe('createFrameByFrame controller', () => {
     expect(renderers.map(({ loadCalls }) => loadCalls)).toEqual([0, 1, 0]);
     await controller.load();
     expect(renderers.map(({ loadCalls }) => loadCalls)).toEqual([1, 2, 1]);
+    const readyState = await controller.whenReady();
+    expect(readyState.status).toBe('ready');
+    expect(renderers.map(({ whenReadyCalls }) => whenReadyCalls)).toEqual([1, 1, 1]);
 
     controller.unload('progress');
     expect(renderers.map(({ unloadCalls }) => unloadCalls)).toEqual([0, 0, 1]);
@@ -351,9 +362,11 @@ describe('createFrameByFrame controller', () => {
       dependencies,
     );
     const loadedMetadata = vi.fn<(event: FrameByFrameLoadedMetadataEvent) => void>();
+    const loadProgress = vi.fn();
     const frames = vi.fn<(event: FrameByFrameFrameEvent) => void>();
     const errors = vi.fn<(error: FrameByFrameErrorInfo) => void>();
     controller.on('loadedmetadata', loadedMetadata);
+    controller.on('loadprogress', loadProgress);
     controller.on('frame', frames);
     controller.on('error', errors);
     await controller.mount();
@@ -366,6 +379,9 @@ describe('createFrameByFrame controller', () => {
     renderer.state = {
       ...renderer.state,
       loadState: 'metadata',
+      loadProgress: {
+        intro: { loadedBytes: 5, totalBytes: 10, ratio: 0.5 },
+      },
       activeClipId: 'intro',
       selectedSource: 'intro.mp4',
       duration: 8,
@@ -373,6 +389,11 @@ describe('createFrameByFrame controller', () => {
       presentedTime: 2.01,
     };
     renderer.onEvent({ type: 'loadstart', clipId: 'intro' });
+    renderer.onEvent({
+      type: 'loadprogress',
+      clipId: 'intro',
+      progress: { loadedBytes: 5, totalBytes: 10, ratio: 0.5 },
+    });
     renderer.onEvent({ type: 'loadedmetadata', clipId: 'intro', duration: 8 });
     renderer.onEvent({ type: 'loadready', clipId: 'intro' });
     renderer.onEvent({
@@ -397,6 +418,15 @@ describe('createFrameByFrame controller', () => {
       duration: 8,
     });
     expect(metadataEvent?.state.status).toBe('ready');
+    expect(loadProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bindingId: 'pixels',
+        clipId: 'intro',
+        loadedBytes: 5,
+        totalBytes: 10,
+        ratio: 0.5,
+      }),
+    );
     expect(frames).toHaveBeenCalledWith(
       expect.objectContaining({ presentedTime: 2.01, width: 1920, height: 1080 }),
     );
@@ -459,6 +489,9 @@ describe('createFrameByFrame controller', () => {
       void controller.load();
     }).toThrow(expect.objectContaining({ code: 'INVALID_LIFECYCLE_OPERATION' }));
     expect(() => {
+      void controller.whenReady();
+    }).toThrow(expect.objectContaining({ code: 'INVALID_LIFECYCLE_OPERATION' }));
+    expect(() => {
       controller.unload();
     }).toThrow(expect.objectContaining({ code: 'INVALID_LIFECYCLE_OPERATION' }));
     controller.destroy();
@@ -475,6 +508,9 @@ describe('createFrameByFrame controller', () => {
     }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
     expect(() => {
       void controller.load();
+    }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
+    expect(() => {
+      void controller.whenReady();
     }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
     expect(() => {
       controller.unload();
@@ -746,10 +782,67 @@ describe('controller configuration', () => {
     ],
     [{ ...validBinding, video: { muted: 'yes' } }, 'INVALID_MEDIA_CONFIG'],
     [{ ...validBinding, seek: { timeEpsilon: -1 } }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, loading: 'immediate' }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, loading: { mode: 'eager' } }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, loading: { mode: 'on-demand' } }, 'INVALID_MEDIA_CONFIG'],
+    [
+      { ...validBinding, loading: { mode: 'immediate', trigger: 'manual' } },
+      'INVALID_MEDIA_CONFIG',
+    ],
+    [
+      {
+        ...validBinding,
+        loading: { mode: 'on-demand', trigger: 'first-use', rootMargin: '100px' },
+      },
+      'INVALID_MEDIA_CONFIG',
+    ],
+    [{ ...validBinding, loading: { credentials: 'include' } }, 'INVALID_MEDIA_CONFIG'],
+    [
+      {
+        ...validBinding,
+        clips: [{ id: 'binding', sources: [{ src: '/video.mp4' }], preload: 'full' }],
+        loading: { credentials: 'invalid' },
+      },
+      'INVALID_MEDIA_CONFIG',
+    ],
   ])('rejects invalid media configuration %#', (binding, code) => {
     expect(() => createFrameByFrame({ axes: { y: { bindings: [binding as never] } } })).toThrow(
       expect.objectContaining({ code }),
     );
+  });
+
+  it('accepts full preload request options and every explicit on-demand trigger', () => {
+    const fullBinding = {
+      ...validBinding,
+      clips: [{ id: 'binding', sources: [{ src: '/video.mp4' }], preload: 'full' as const }],
+    };
+
+    expect(() =>
+      createFrameByFrame({
+        axes: {
+          y: {
+            bindings: [
+              {
+                ...fullBinding,
+                loading: { credentials: 'include', cache: 'force-cache' },
+              },
+            ],
+          },
+        },
+      }),
+    ).not.toThrow();
+
+    for (const loading of [
+      { mode: 'on-demand', trigger: 'manual' },
+      { mode: 'on-demand', trigger: 'first-use' },
+      { mode: 'on-demand', trigger: 'target-near-viewport', rootMargin: '250px' },
+    ] as const) {
+      expect(() =>
+        createFrameByFrame({
+          axes: { y: { bindings: [{ ...fullBinding, loading }] } },
+        }),
+      ).not.toThrow();
+    }
   });
 
   it('requires explicit, known clip IDs for multi-clip timelines', () => {

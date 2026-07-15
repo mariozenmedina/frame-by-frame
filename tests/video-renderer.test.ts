@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { compileControllerConfig } from '../src/core/controller-config.js';
+import { AssetCache } from '../src/media/asset-cache.js';
 import { createNativeVideoRenderer } from '../src/media/video-renderer.js';
 import { FakeVideoElement } from './helpers/fake-video.js';
 
 import type { ResolvedVideoTarget } from '../src/media/video-target.js';
-import type { VideoRendererEvent } from '../src/media/video-renderer.js';
+import type { VideoRendererDependencies, VideoRendererEvent } from '../src/media/video-renderer.js';
 import type { TimelineResolution, VideoClipConfig } from '../src/types.js';
 
 const compileBinding = (
@@ -56,6 +57,34 @@ const resolveAt = (clipId: string, targetTime: number, requestedTime = targetTim
     requestedTime,
     targetTime,
   }) satisfies TimelineResolution;
+
+const createFullPreloadDependencies = (
+  fetch: typeof globalThis.fetch,
+  observeNearViewport: VideoRendererDependencies['observeNearViewport'] = () => vi.fn(),
+) => {
+  const createObjectURL = vi.fn(
+    (blob: Blob) => `blob:${String(blob.size)}:${String(createObjectURL.mock.calls.length)}`,
+  );
+  const revokeObjectURL = vi.fn();
+  const dependencies: VideoRendererDependencies = {
+    assetCache: new AssetCache({
+      fetch: (url, init) => fetch(url, init),
+      createObjectURL,
+      revokeObjectURL,
+    }),
+    resolveUrl: (source) => new URL(source, 'https://example.com/').href,
+    observeNearViewport,
+  };
+  return { createObjectURL, dependencies, revokeObjectURL };
+};
+
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === 'string') {
+    return input;
+  }
+
+  return input instanceof URL ? input.href : input.url;
+};
 
 describe('native video renderer', () => {
   it('applies owned-target defaults and releases the target on destroy', () => {
@@ -307,5 +336,309 @@ describe('native video renderer', () => {
     if (seekEvent?.type === 'error') {
       expect(seekEvent.error).toBeInstanceOf(Error);
     }
+  });
+
+  it('fully preloads all immediate clips and waits for the active target to become ready', async () => {
+    const target = new FakeVideoElement();
+    const events = vi.fn<(event: VideoRendererEvent) => void>();
+    const fetch = vi.fn((input: RequestInfo | URL) => {
+      const bytes = requestUrl(input).includes('intro') ? [1, 2] : [3, 4, 5];
+      return Promise.resolve(
+        new Response(new Uint8Array(bytes), {
+          headers: {
+            'content-length': String(bytes.length),
+            'content-type': 'video/mp4',
+          },
+        }),
+      );
+    });
+    const { dependencies, revokeObjectURL } = createFullPreloadDependencies(fetch);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [
+        { id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'full' },
+        { id: 'detail', sources: [{ src: '/detail.mp4' }], preload: 'full' },
+      ]),
+      createHandle(target).handle,
+      events,
+      dependencies,
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    const readiness = renderer.whenReady();
+    await vi.waitFor(() => {
+      expect(target.getAttribute('src')).toMatch(/^blob:/);
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(target.preload).toBe('auto');
+    target.duration = 5;
+    target.emit('loadedmetadata');
+    target.emit('loadeddata');
+    await expect(readiness).resolves.toBeUndefined();
+    expect(renderer.getState().loadProgress).toEqual({
+      intro: { loadedBytes: 2, totalBytes: 2, ratio: 1 },
+      detail: { loadedBytes: 3, totalBytes: 3, ratio: 1 },
+    });
+    expect(events.mock.calls.some(([event]) => event.type === 'loadprogress')).toBe(true);
+
+    renderer.destroy();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('tries the next source when a full-preload request fails', async () => {
+    const target = new FakeVideoElement();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 }));
+    const { dependencies } = createFullPreloadDependencies(fetch);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [
+        {
+          id: 'intro',
+          sources: [{ src: '/first.mp4' }, { src: '/second.mp4' }],
+          preload: 'full',
+        },
+      ]),
+      createHandle(target).handle,
+      vi.fn(),
+      dependencies,
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    await vi.waitFor(() => {
+      expect(target.getAttribute('src')).toMatch(/^blob:/);
+    });
+    target.emit('loadedmetadata');
+    target.emit('loadeddata');
+    await renderer.whenReady();
+    expect(fetch.mock.calls.map(([input]) => requestUrl(input))).toEqual([
+      'https://example.com/first.mp4',
+      'https://example.com/second.mp4',
+    ]);
+    expect(renderer.getState().selectedSource).toBe('/second.mp4');
+    renderer.destroy();
+  });
+
+  it('defers viewport loading until the observer enters and disconnects after activation', async () => {
+    const target = new FakeVideoElement();
+    const fetch = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.resolve(new Response(new Uint8Array([1]))),
+    );
+    let enter: (() => void) | null = null;
+    const disconnect = vi.fn();
+    const observeNearViewport = vi.fn((_target, rootMargin: string, onEnter: () => void) => {
+      expect(rootMargin).toBe('400px 0px');
+      enter = onEnter;
+      return disconnect;
+    });
+    const { dependencies } = createFullPreloadDependencies(fetch, observeNearViewport);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'full' }], {
+        loading: {
+          mode: 'on-demand',
+          trigger: 'target-near-viewport',
+          rootMargin: '400px 0px',
+        },
+      }),
+      createHandle(target).handle,
+      vi.fn(),
+      dependencies,
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    await expect(renderer.whenReady()).resolves.toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+    (enter as unknown as () => void)();
+    expect(disconnect).toHaveBeenCalledOnce();
+    const readiness = renderer.whenReady();
+    await vi.waitFor(() => {
+      expect(target.getAttribute('src')).toMatch(/^blob:/);
+    });
+    target.emit('loadedmetadata');
+    target.emit('loadeddata');
+    await readiness;
+    expect(fetch).toHaveBeenCalledOnce();
+    renderer.destroy();
+  });
+
+  it('loads only the first-used full clip for a first-use policy', async () => {
+    const target = new FakeVideoElement();
+    const fetch = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.resolve(new Response(new Uint8Array([1]))),
+    );
+    const { dependencies } = createFullPreloadDependencies(fetch);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(
+        target,
+        [
+          { id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'full' },
+          { id: 'detail', sources: [{ src: '/detail.mp4' }], preload: 'full' },
+        ],
+        { loading: { mode: 'on-demand', trigger: 'first-use' } },
+      ),
+      createHandle(target).handle,
+      vi.fn(),
+      dependencies,
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    renderer.setResolution(resolveAt('intro', 1));
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+    const firstRequest = fetch.mock.calls[0]?.[0];
+    expect(firstRequest === undefined ? '' : requestUrl(firstRequest)).toContain('/intro.mp4');
+    renderer.destroy();
+  });
+
+  it('makes pending readiness follow the latest desired clip generation', async () => {
+    const target = new FakeVideoElement();
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [
+        { id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'auto' },
+        { id: 'detail', sources: [{ src: '/detail.mp4' }], preload: 'metadata' },
+      ]),
+      createHandle(target).handle,
+      vi.fn(),
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    const readiness = renderer.whenReady();
+    let settled = false;
+    void readiness.then((): void => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    renderer.setResolution(resolveAt('detail', 2));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    target.duration = 4;
+    target.emit('loadedmetadata');
+    await readiness;
+    expect(settled).toBe(true);
+    expect(renderer.getState().activeClipId).toBe('detail');
+    renderer.destroy();
+  });
+
+  it('uses the default browser dependencies for full preload without import-time access', async () => {
+    const target = new FakeVideoElement();
+    const fetch = vi.fn<typeof globalThis.fetch>(() =>
+      Promise.resolve(new Response(new Uint8Array([1, 2]), { status: 200 })),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'full' }]),
+      createHandle(target).handle,
+      vi.fn(),
+    );
+
+    try {
+      renderer.setResolution(resolveAt('intro', 1));
+      const readiness = renderer.whenReady();
+      await vi.waitFor(() => {
+        expect(target.getAttribute('src')).toMatch(/^blob:/);
+      });
+      target.emit('loadedmetadata');
+      target.emit('loadeddata');
+      await readiness;
+      expect(fetch).toHaveBeenCalledWith(
+        'https://example.com/intro.mp4',
+        expect.objectContaining({ credentials: 'same-origin', cache: 'default' }),
+      );
+    } finally {
+      renderer.destroy();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('uses a one-shot default IntersectionObserver for viewport activation', () => {
+    const target = new FakeVideoElement();
+    const callbacks: IntersectionObserverCallback[] = [];
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+
+    class TestIntersectionObserver {
+      constructor(nextCallback: IntersectionObserverCallback) {
+        callbacks.push(nextCallback);
+      }
+
+      observe = observe;
+      disconnect = disconnect;
+      unobserve = vi.fn();
+      takeRecords = vi.fn((): IntersectionObserverEntry[] => []);
+      readonly root = null;
+      readonly rootMargin = '0px';
+      readonly thresholds = [0];
+    }
+
+    vi.stubGlobal('IntersectionObserver', TestIntersectionObserver);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }] }], {
+        loading: {
+          mode: 'on-demand',
+          trigger: 'target-near-viewport',
+          rootMargin: '200px',
+        },
+      }),
+      createHandle(target).handle,
+      vi.fn(),
+    );
+
+    try {
+      renderer.setResolution(resolveAt('intro', 1));
+      expect(target.getAttribute('src')).toBeNull();
+
+      const callback = callbacks[0];
+
+      if (callback === undefined) {
+        throw new Error('Expected an IntersectionObserver callback.');
+      }
+
+      const entry = { isIntersecting: true } as IntersectionObserverEntry;
+      const observer = {} as IntersectionObserver;
+      callback([entry], observer);
+      expect(observe).toHaveBeenCalledWith(target);
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(target.getAttribute('src')).toBe('/intro.mp4');
+    } finally {
+      renderer.destroy();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reports a terminal full-preload failure and lets explicit load retry it', async () => {
+    const target = new FakeVideoElement();
+    const events = vi.fn<(event: VideoRendererEvent) => void>();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValueOnce(new TypeError('CORS blocked'))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 }));
+    const { dependencies } = createFullPreloadDependencies(fetch);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'full' }]),
+      createHandle(target).handle,
+      events,
+      dependencies,
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    await expect(renderer.whenReady()).rejects.toMatchObject({ code: 'FULL_PRELOAD_FAILED' });
+    const errorEvent = events.mock.calls.find(([event]) => event.type === 'error')?.[0];
+    expect(errorEvent?.type).toBe('error');
+
+    if (errorEvent?.type === 'error') {
+      expect(errorEvent.error.code).toBe('FULL_PRELOAD_FAILED');
+    }
+
+    const loading = renderer.load();
+    await vi.waitFor(() => {
+      expect(target.getAttribute('src')).toMatch(/^blob:/);
+    });
+    target.emit('loadedmetadata');
+    await loading;
+    expect(fetch).toHaveBeenCalledTimes(2);
+    renderer.destroy();
   });
 });

@@ -29,6 +29,7 @@ The repository now contains the package foundation, but the package remains priv
 - Document and custom-element scroll sources.
 - Independent horizontal and vertical axes.
 - Pixel and normalized-progress scroll segments.
+- Multiple media clips within one timeline.
 - Forward and reverse media-time ranges with easing and optional frame snapping.
 - Responsive overrides driven by CSS media queries.
 - Native, full-file, and on-demand loading strategies.
@@ -53,6 +54,30 @@ Development is intentionally incremental:
 
 Milestone details will be tracked through GitHub Issues as implementation begins.
 
+## Timeline mapping
+
+The first implemented runtime capability is a pure, SSR-safe timeline engine. It resolves a scroll coordinate to a clip ID and media time without reading the DOM or loading media.
+
+```ts
+import { createTimeline } from '@frame-by-frame/core';
+
+const timeline = createTimeline({
+  easing: 'ease-in-out',
+  segments: [
+    { scroll: [0, 100], clip: 'intro', media: [0, 5] },
+    { scroll: [100, 250], clip: 'detail', media: [12, 6], easing: 'linear' },
+  ],
+});
+
+const result = timeline.resolve(150);
+// result.clipId === 'detail'
+// result.requestedTime === 10
+```
+
+Timeline easing acts as a default and can be overridden by each segment. Different clip IDs identify different media assets; alternate WebM/MP4 sources for one clip will be handled by the future media binding. Mapping does not imply loading, seamless decoder switching, or crossfading.
+
+Read the [timeline API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/timeline.md) for boundaries, gaps, easing, frame snapping, errors, and multi-clip behavior.
+
 ## Development
 
 Use Node.js 24 LTS and pnpm 11 for local development. Node.js 22.18+ and 24.11+ are validated in CI.
@@ -66,7 +91,7 @@ Individual commands are available for formatting, linting, type checking, tests,
 
 Browser automation is intentionally not part of the current foundation. Browser integration suites will be added with the relevant runtime features.
 
-See [ADR 0001](docs/decisions/0001-package-foundation.md) for the package and toolchain decisions.
+See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions and [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract.
 
 ## Contributing
 

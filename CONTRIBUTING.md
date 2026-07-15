@@ -50,7 +50,7 @@ pnpm test:coverage
 pnpm build
 ```
 
-`pnpm check` is the required local quality gate. It checks formatting, typed lint rules, TypeScript, unit tests, the ESM build, package metadata, and declaration compatibility.
+`pnpm check` is the required local quality gate. It checks formatting, typed lint rules, TypeScript, unit-test coverage thresholds, the ESM build, package metadata, and declaration compatibility.
 
 Every implementation pull request is expected to:
 

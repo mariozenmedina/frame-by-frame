@@ -11,7 +11,7 @@ Scroll-driven video experiences often repeat the same difficult work: resolving 
 
 The planned npm package is `@frame-by-frame/core`.
 
-The repository now contains the deterministic timeline and controller foundation, but the package remains private at version `0.0.0` until media rendering and a release process exist.
+The repository now contains the deterministic timeline, shared scroll controller, and native video renderer. The package remains private at version `0.0.0` while the remaining v1 behavior and release process are built.
 
 ## Design principles
 
@@ -46,7 +46,7 @@ Development is intentionally incremental:
 
 1. Establish the public contract and deterministic mapping engine.
 2. Implement source observation, scheduling, and controller lifecycle.
-3. Add native video rendering and media loading.
+3. Add native video rendering and media loading. **Current stage.**
 4. Add responsive behavior, accessibility preferences, and canvas rendering.
 5. Harden performance, documentation, tests, and release automation.
 6. Release the core before adding framework examples.
@@ -74,7 +74,7 @@ const result = timeline.resolve(150);
 // result.requestedTime === 10
 ```
 
-Timeline easing acts as a default and can be overridden by each segment. Different clip IDs identify different media assets; alternate WebM/MP4 sources for one clip will be handled by the future media binding. Mapping does not imply loading, seamless decoder switching, or crossfading.
+Timeline easing acts as a default and can be overridden by each segment. Different clip IDs identify different media assets; each clip may provide ordered WebM/MP4 source candidates. Mapping alone does not imply loading, seamless decoder switching, or crossfading.
 
 Read the [timeline API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/timeline.md) for boundaries, gaps, easing, frame snapping, errors, and multi-clip behavior.
 
@@ -92,6 +92,20 @@ const controller = createFrameByFrame({
       bindings: [
         {
           id: 'story',
+          target: () => document.querySelector<HTMLVideoElement>('#story-video'),
+          clips: [
+            {
+              id: 'intro',
+              sources: [
+                { src: '/video/intro.webm', type: 'video/webm' },
+                { src: '/video/intro.mp4', type: 'video/mp4' },
+              ],
+            },
+            {
+              id: 'detail',
+              sources: [{ src: '/video/detail.mp4', type: 'video/mp4' }],
+            },
+          ],
           easing: 'ease-in-out',
           segments: [
             {
@@ -114,8 +128,11 @@ const controller = createFrameByFrame({
 });
 
 controller.on('update', ({ state }) => {
-  const target = state.bindings.story?.resolution;
-  // target?.clipId and target?.targetTime are ready for a renderer.
+  console.log(state.bindings.story?.resolution);
+});
+
+controller.on('frame', ({ clipId, presentedTime }) => {
+  console.log(clipId, presentedTime);
 });
 
 await controller.mount();
@@ -123,9 +140,9 @@ await controller.mount();
 
 Controllers sharing a canonical scroll source also share one passive scroll listener and at most one pending animation frame. The raw scroll handler performs no metric reads; each animation frame distributes one scroll snapshot to every subscriber.
 
-This foundation intentionally stops at mapping. It does not yet find a media target, load files, set `HTMLMediaElement.currentTime`, draw to canvas, or call `requestVideoFrameCallback()`. Those capabilities belong to the upcoming renderer work.
+The native renderer resolves or creates one `HTMLVideoElement` per binding, selects ordered source candidates, and writes precise `currentTime` seeks. While a seek is in flight, only the latest pending target is retained. When available, `requestVideoFrameCallback()` reports the composed frame; other browsers use native media events as an approximation.
 
-Read the [controller API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/controller.md) for source resolution, lifecycle, state, events, errors, and scheduling behavior.
+Read the [controller API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/controller.md) for source resolution, lifecycle, state, events, errors, and scheduling behavior, and the [native video guide](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/video.md) for targets, clips, loading, seeking, and cleanup.
 
 ## Development
 
@@ -138,9 +155,9 @@ pnpm check
 
 Individual commands are available for formatting, linting, type checking, tests, coverage, and builds. The build emits ESM, TypeScript declarations, and source maps, then validates the package with publint and Are the Types Wrong.
 
-Browser automation is intentionally not part of the current foundation. Browser integration suites will be added with the relevant runtime features.
+Native media behavior is covered with deterministic structural fakes in Node. Browser validation remains a manual operator step because codec, decoder, and frame-presentation behavior varies by runtime and media asset.
 
-See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, and [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions.
+See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, and [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling.
 
 ## Contributing
 

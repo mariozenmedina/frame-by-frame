@@ -3,6 +3,12 @@ import { FrameByFrameError } from './errors.js';
 import { compileControllerConfig } from './controller-config.js';
 
 import type { ControllerBindingConfig, ControllerConfig } from './controller-config.js';
+import type {
+  VideoRenderer,
+  VideoRendererEvent,
+  VideoRendererFactory,
+  VideoRendererState,
+} from '../media/video-renderer.js';
 import type { ResolvedScrollSource } from '../scroll/source.js';
 import type {
   AsyncErrorReporter,
@@ -29,6 +35,7 @@ export interface ControllerDependencies {
   readonly resolveSource: (reference: unknown) => ResolvedScrollSource;
   readonly sourceRegistry: SourceRegistry;
   readonly reportAsyncError: AsyncErrorReporter;
+  readonly createVideoRenderer: VideoRendererFactory;
 }
 
 interface MutableAxisState {
@@ -41,9 +48,22 @@ interface MutableAxisState {
 interface MutableBindingState {
   readonly config: ControllerBindingConfig;
   resolution: TimelineResolution | null;
+  renderer: VideoRenderer | null;
+  media: VideoRendererState;
 }
 
 const EMPTY_BREAKPOINTS: readonly string[] = Object.freeze([]);
+
+const createInitialMediaState = (): VideoRendererState => ({
+  loadState: 'idle',
+  activeClipId: null,
+  selectedSource: null,
+  duration: null,
+  appliedTime: null,
+  presentedTime: null,
+  seeking: false,
+  error: null,
+});
 
 const cloneResolution = (resolution: TimelineResolution): TimelineResolution =>
   Object.freeze({ ...resolution });
@@ -109,7 +129,12 @@ class Controller implements FrameByFrameController {
     }
 
     for (const binding of this.#config.bindings) {
-      this.#bindings.set(binding.id, { config: binding, resolution: null });
+      this.#bindings.set(binding.id, {
+        config: binding,
+        resolution: null,
+        renderer: null,
+        media: createInitialMediaState(),
+      });
     }
   }
 
@@ -205,6 +230,27 @@ class Controller implements FrameByFrameController {
     this.#emitUpdate('disable');
   }
 
+  load(bindingId?: string): Promise<void> {
+    this.#assertMediaLifecycle('load()');
+    return Promise.all(
+      this.#selectBindings(bindingId).map((binding) => this.#getMountedRenderer(binding).load()),
+    ).then((): void => undefined);
+  }
+
+  unload(bindingId?: string): void {
+    this.#assertMediaLifecycle('unload()');
+
+    for (const binding of this.#selectBindings(bindingId)) {
+      this.#getMountedRenderer(binding).unload();
+    }
+  }
+
+  getTarget(bindingId: string): HTMLVideoElement | null {
+    this.#assertNotDestroyed();
+    const binding = this.#getBinding(bindingId);
+    return binding.renderer?.getTarget() ?? null;
+  }
+
   getState(): FrameByFrameState {
     const axes: Partial<Record<AxisName, FrameByFrameAxisState>> = {};
 
@@ -220,10 +266,20 @@ class Controller implements FrameByFrameController {
     const bindings: Record<string, FrameByFrameBindingState> = {};
 
     for (const [id, binding] of this.#bindings) {
+      const media = binding.renderer?.getState() ?? binding.media;
       bindings[id] = Object.freeze({
         id,
         axis: binding.config.axis,
         resolution: binding.resolution === null ? null : cloneResolution(binding.resolution),
+        renderer: 'video',
+        loadState: media.loadState,
+        activeClipId: media.activeClipId,
+        selectedSource: media.selectedSource,
+        duration: media.duration,
+        appliedTime: media.appliedTime,
+        presentedTime: media.presentedTime,
+        seeking: media.seeking,
+        error: media.error === null ? null : cloneError(media.error),
       });
     }
 
@@ -260,6 +316,7 @@ class Controller implements FrameByFrameController {
 
     ++this.#mountGeneration;
     this.#unsubscribeFromSource();
+    this.#destroyRenderers();
     this.#scheduler = null;
     this.#source = null;
     this.#enabled = false;
@@ -279,6 +336,8 @@ class Controller implements FrameByFrameController {
     const resolvedSource = this.#dependencies.resolveSource(this.#config.source);
     const scheduler = this.#dependencies.sourceRegistry.get(resolvedSource);
     const snapshot = scheduler.refresh();
+
+    this.#createRenderers();
 
     if (generation !== this.#mountGeneration || this.#status === 'destroyed') {
       throw new FrameByFrameError(
@@ -316,6 +375,7 @@ class Controller implements FrameByFrameController {
     }
 
     this.#unsubscribeFromSource();
+    this.#destroyRenderers();
     this.#scheduler = null;
     this.#source = null;
     this.#status = 'error';
@@ -343,11 +403,150 @@ class Controller implements FrameByFrameController {
 
       if (!resolveBindings || !axis?.enabled) {
         binding.resolution = null;
+        binding.renderer?.setResolution(null);
         continue;
       }
 
       const position = binding.config.timeline.unit === 'px' ? axis.offset : axis.progress;
       binding.resolution = binding.config.timeline.resolve(position);
+      binding.renderer?.setResolution(binding.resolution);
+    }
+  }
+
+  #createRenderers(): void {
+    try {
+      for (const binding of this.#bindings.values()) {
+        const renderer = this.#dependencies.createVideoRenderer(binding.config, (event): void => {
+          this.#handleRendererEvent(binding.config.id, event);
+        });
+        binding.renderer = renderer;
+        binding.media = renderer.getState();
+      }
+    } catch (error) {
+      this.#destroyRenderers();
+      throw error;
+    }
+  }
+
+  #destroyRenderers(): void {
+    for (const binding of this.#bindings.values()) {
+      const renderer = binding.renderer;
+
+      if (renderer === null) {
+        continue;
+      }
+
+      renderer.destroy();
+      binding.media = renderer.getState();
+      binding.renderer = null;
+    }
+  }
+
+  #handleRendererEvent(bindingId: string, event: VideoRendererEvent): void {
+    const binding = this.#bindings.get(bindingId);
+    const renderer = binding?.renderer;
+
+    if (
+      binding === undefined ||
+      renderer === undefined ||
+      renderer === null ||
+      this.#status === 'destroyed'
+    ) {
+      return;
+    }
+
+    binding.media = renderer.getState();
+
+    switch (event.type) {
+      case 'loadstart':
+      case 'loadready':
+        this.#events.emit(event.type, {
+          bindingId,
+          clipId: event.clipId,
+          state: this.getState(),
+        });
+        break;
+      case 'loadedmetadata':
+        this.#events.emit('loadedmetadata', {
+          bindingId,
+          clipId: event.clipId,
+          duration: event.duration,
+          state: this.getState(),
+        });
+        break;
+      case 'seekrequest':
+        this.#events.emit('seekrequest', {
+          bindingId,
+          clipId: event.clipId,
+          requestedTime: event.requestedTime,
+          targetTime: event.targetTime,
+          state: this.getState(),
+        });
+        break;
+      case 'frame':
+        this.#events.emit('frame', {
+          bindingId,
+          clipId: event.clipId,
+          presentedTime: event.presentedTime,
+          expectedDisplayTime: event.expectedDisplayTime,
+          width: event.width,
+          height: event.height,
+          state: this.getState(),
+        });
+        break;
+      case 'error':
+        this.#events.emit('error', cloneError(event.error));
+        break;
+    }
+  }
+
+  #selectBindings(bindingId: string | undefined): MutableBindingState[] {
+    if (bindingId === undefined) {
+      return [...this.#bindings.values()];
+    }
+
+    return [this.#getBinding(bindingId)];
+  }
+
+  #getBinding(bindingId: string): MutableBindingState {
+    const binding = this.#bindings.get(bindingId);
+
+    if (binding === undefined) {
+      throw new FrameByFrameError(
+        'INVALID_CONTROLLER',
+        `Binding "${bindingId}" is not configured.`,
+        {
+          details: { bindingId },
+        },
+      );
+    }
+
+    return binding;
+  }
+
+  #getMountedRenderer(binding: MutableBindingState): VideoRenderer {
+    const renderer = binding.renderer;
+
+    if (renderer === null) {
+      throw new FrameByFrameError(
+        'INVALID_LIFECYCLE_OPERATION',
+        'Media operations require a successfully mounted controller.',
+        { details: { bindingId: binding.config.id, status: this.#status } },
+      );
+    }
+
+    return renderer;
+  }
+
+  #assertMediaLifecycle(operation: string): void {
+    this.#assertNotDestroyed();
+
+    if (this.#status !== 'ready' && this.#status !== 'disabled') {
+      throw new FrameByFrameError(
+        'INVALID_LIFECYCLE_OPERATION',
+        `${operation} requires a successfully mounted controller.`,
+        { details: { status: this.#status } },
+      );
     }
   }
 
@@ -376,6 +575,9 @@ class Controller implements FrameByFrameController {
       'The controller failed while resolving a scroll update.',
     );
     this.#unsubscribeFromSource();
+    this.#destroyRenderers();
+    this.#scheduler = null;
+    this.#source = null;
     this.#status = 'error';
     this.#lastError = packageError;
     this.#events.emit('error', cloneError(packageError));

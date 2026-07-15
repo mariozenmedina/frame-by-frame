@@ -14,7 +14,14 @@ assert.equal(typeof core.FrameByFrameError, 'function');
 const controller = core.createFrameByFrame({
   axes: {
     y: {
-      bindings: [{ id: 'intro', segments: [{ media: [0, 1], scroll: [0, 1] }] }],
+      bindings: [
+        {
+          id: 'intro',
+          target: '#intro',
+          clips: [{ id: 'intro', sources: [{ src: '/intro.mp4' }] }],
+          segments: [{ media: [0, 1], scroll: [0, 1] }],
+        },
+      ],
     },
   },
 });

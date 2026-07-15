@@ -14,6 +14,8 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
         bindings: [
           {
             id: 'intro',
+            target: element as unknown as HTMLVideoElement,
+            clips: [{ id: 'intro-video', sources: [{ src: '/intro.mp4' }] }],
             easing: 'ease-in-out',
             segments: [
               {
@@ -33,6 +35,17 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
     const state: FrameByFrameState = event.state;
     void state;
   });
+  controller.on('frame', ({ bindingId, presentedTime }) => {
+    const id: string = bindingId;
+    const time: number = presentedTime;
+    void id;
+    void time;
+  });
+
+  void controller.load('intro');
+  controller.unload('intro');
+  const target: HTMLVideoElement | null = controller.getTarget('intro');
+  void target;
 
   const state = controller.getState();
 
@@ -48,6 +61,8 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
         bindings: [
           {
             id: 'invalid',
+            target: element as unknown as HTMLVideoElement,
+            clips: [{ id: 'invalid-video', sources: [{ src: '/invalid.mp4' }] }],
             segments: [
               {
                 media: [0, 1],

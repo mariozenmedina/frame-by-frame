@@ -125,6 +125,8 @@ export type VideoRendererEvent =
     };
 
 export interface VideoRenderer {
+  prepareConfig(config: ControllerBindingConfig): VideoRendererConfigTransaction;
+  setActivity(activity: VideoRendererActivity): void;
   setResolution(resolution: TimelineResolution | null): void;
   load(): Promise<void>;
   whenReady(): Promise<void>;
@@ -134,9 +136,17 @@ export interface VideoRenderer {
   destroy(): void;
 }
 
+export type VideoRendererActivity = 'active' | 'suspended' | 'disabled';
+
+export interface VideoRendererConfigTransaction {
+  commit(): void;
+  cancel(): void;
+}
+
 export type VideoRendererFactory = (
   config: ControllerBindingConfig,
   onEvent: (event: VideoRendererEvent) => void,
+  activity?: VideoRendererActivity,
 ) => VideoRenderer;
 
 const defaultAssetCache = new AssetCache({
@@ -239,6 +249,29 @@ const restoreTarget = (target: HTMLVideoElement, snapshot: TargetSnapshot): void
   }
 };
 
+const restoreTargetConfiguration = (target: HTMLVideoElement, snapshot: TargetSnapshot): void => {
+  for (const attribute of SNAPSHOT_ATTRIBUTES) {
+    if (attribute === 'src') {
+      continue;
+    }
+
+    const value = snapshot.attributes[attribute];
+
+    if (value === null || value === undefined) {
+      target.removeAttribute(attribute);
+    } else {
+      target.setAttribute(attribute, value);
+    }
+  }
+
+  target.muted = snapshot.muted;
+  target.defaultMuted = snapshot.defaultMuted;
+  target.playsInline = snapshot.playsInline;
+  target.controls = snapshot.controls;
+  target.loop = snapshot.loop;
+  target.autoplay = snapshot.autoplay;
+};
+
 const configureTarget = (
   target: HTMLVideoElement,
   config: ControllerBindingConfig,
@@ -298,7 +331,7 @@ const createError = (
   });
 
 class NativeVideoRenderer implements VideoRenderer {
-  readonly #config: ControllerBindingConfig;
+  #config: ControllerBindingConfig;
   readonly #handle: ResolvedVideoTarget;
   readonly #target: HTMLVideoElement;
   readonly #onEvent: (event: VideoRendererEvent) => void;
@@ -330,25 +363,29 @@ class NativeVideoRenderer implements VideoRenderer {
   #frameToken = 0;
   #readinessGeneration = 0;
   #stopObserving: (() => void) | null = null;
+  #activity: VideoRendererActivity = 'active';
+  #manualUnload = false;
 
   constructor(
     config: ControllerBindingConfig,
     handle: ResolvedVideoTarget,
     onEvent: (event: VideoRendererEvent) => void,
     dependencies: VideoRendererDependencies,
+    activity: VideoRendererActivity,
   ) {
     this.#config = config;
     this.#handle = handle;
     this.#target = handle.target;
     this.#onEvent = onEvent;
     this.#dependencies = dependencies;
+    this.#activity = activity;
     this.#snapshot = handle.owned ? null : snapshotTarget(this.#target);
     configureTarget(this.#target, config, handle.owned);
-    this.#autoLoad = config.loading.mode === 'immediate';
+    this.#autoLoad = activity === 'active' && config.loading.mode === 'immediate';
 
     if (this.#autoLoad) {
       this.#prepareAllFullClips();
-    } else if (config.loading.trigger === 'target-near-viewport') {
+    } else if (activity === 'active' && config.loading.trigger === 'target-near-viewport') {
       try {
         this.#stopObserving = dependencies.observeNearViewport(
           this.#target,
@@ -369,8 +406,148 @@ class NativeVideoRenderer implements VideoRenderer {
     }
   }
 
+  prepareConfig(config: ControllerBindingConfig): VideoRendererConfigTransaction {
+    this.#assertNotDestroyed();
+
+    if (
+      config.id !== this.#config.id ||
+      config.axis !== this.#config.axis ||
+      config.target !== this.#config.target ||
+      config.mountTo !== this.#config.mountTo
+    ) {
+      throw new FrameByFrameError(
+        'INVALID_BREAKPOINT_CONFIG',
+        'Responsive overrides cannot change binding identity, axis, or target ownership.',
+        { details: { bindingId: this.#config.id } },
+      );
+    }
+
+    let committed = false;
+    let enteredBeforeCommit = false;
+    let candidateObserver: (() => void) | null = null;
+
+    if (
+      this.#activity === 'active' &&
+      config.loading.mode === 'on-demand' &&
+      config.loading.trigger === 'target-near-viewport'
+    ) {
+      candidateObserver = this.#observeNearViewport(config, (): void => {
+        if (committed) {
+          this.#activate(true, true);
+        } else {
+          enteredBeforeCommit = true;
+        }
+      });
+    }
+
+    let settled = false;
+
+    return {
+      commit: (): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        this.#stopObserving?.();
+        this.#stopObserving = null;
+        this.#rejectWaiters(
+          createError(
+            'MEDIA_LOAD_FAILED',
+            'Media loading was superseded by a responsive configuration change.',
+            this.#config.id,
+            this.#activeClipId,
+            this.#selectedSource,
+          ),
+        );
+        this.#supersedeReadiness();
+        this.#releaseFullAssets();
+        this.#desired = null;
+        this.#resetSource('idle');
+
+        if (this.#snapshot !== null) {
+          restoreTargetConfiguration(this.#target, this.#snapshot);
+        }
+
+        this.#config = config;
+        configureTarget(this.#target, config, this.#handle.owned);
+        this.#manualUnload = false;
+        this.#autoLoad = this.#activity === 'active' && config.loading.mode === 'immediate';
+        committed = true;
+
+        if (this.#activity === 'active') {
+          if (this.#autoLoad) {
+            candidateObserver?.();
+            candidateObserver = null;
+            this.#prepareAllFullClips();
+          } else {
+            this.#stopObserving = candidateObserver;
+            candidateObserver = null;
+
+            if (enteredBeforeCommit) {
+              this.#activate(true, true);
+            }
+          }
+        } else {
+          candidateObserver?.();
+          candidateObserver = null;
+        }
+      },
+      cancel: (): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        candidateObserver?.();
+        candidateObserver = null;
+      },
+    };
+  }
+
+  setActivity(activity: VideoRendererActivity): void {
+    this.#assertNotDestroyed();
+
+    if (activity === this.#activity) {
+      return;
+    }
+
+    this.#activity = activity;
+
+    if (activity === 'suspended') {
+      this.#cancelFrameObservation();
+      return;
+    }
+
+    if (activity === 'disabled') {
+      this.#autoLoad = false;
+      this.#stopObserving?.();
+      this.#stopObserving = null;
+      this.#rejectWaiters(
+        createError(
+          'MEDIA_LOAD_FAILED',
+          'Media loading was cancelled by the active reduced-motion behavior.',
+          this.#config.id,
+          this.#activeClipId,
+          this.#selectedSource,
+        ),
+      );
+      this.#supersedeReadiness();
+      this.#releaseFullAssets();
+      this.#desired = null;
+      this.#resetSource('unloaded');
+      return;
+    }
+
+    if (this.#manualUnload) {
+      return;
+    }
+
+    this.#startConfiguredLoadingPolicy();
+  }
+
   setResolution(resolution: TimelineResolution | null): void {
-    if (this.#destroyed || resolution === null) {
+    if (this.#destroyed || resolution === null || this.#activity === 'disabled') {
       return;
     }
 
@@ -387,6 +564,10 @@ class NativeVideoRenderer implements VideoRenderer {
     };
     const clipChanged = this.#desired?.clipId !== clipId;
     this.#desired = desired;
+
+    if (this.#activity === 'suspended') {
+      return;
+    }
 
     if (
       !this.#autoLoad &&
@@ -417,6 +598,11 @@ class NativeVideoRenderer implements VideoRenderer {
 
   load(): Promise<void> {
     this.#assertNotDestroyed();
+    this.#manualUnload = false;
+
+    if (this.#activity === 'disabled') {
+      return Promise.resolve();
+    }
 
     if (this.#error?.code === 'FULL_PRELOAD_FAILED' && this.#desired !== null) {
       this.#discardFullAsset(this.#desired.clipId);
@@ -489,6 +675,7 @@ class NativeVideoRenderer implements VideoRenderer {
 
   unload(): void {
     this.#assertNotDestroyed();
+    this.#manualUnload = true;
     this.#autoLoad = false;
     this.#stopObserving?.();
     this.#stopObserving = null;
@@ -561,6 +748,10 @@ class NativeVideoRenderer implements VideoRenderer {
   }
 
   #activate(prepareAllFullClips: boolean, beginDesired = true): void {
+    if (this.#activity !== 'active') {
+      return;
+    }
+
     const changed = !this.#autoLoad;
     this.#autoLoad = true;
     this.#stopObserving?.();
@@ -584,6 +775,59 @@ class NativeVideoRenderer implements VideoRenderer {
         this.#loadState === 'error')
     ) {
       this.#beginDesiredClip();
+    }
+  }
+
+  #observeNearViewport(config: ControllerBindingConfig, onEnter: () => void): () => void {
+    try {
+      return this.#dependencies.observeNearViewport(
+        this.#target,
+        config.loading.rootMargin ?? '0px',
+        onEnter,
+      );
+    } catch (cause) {
+      throw cause instanceof FrameByFrameError
+        ? cause
+        : new FrameByFrameError(
+            'ENVIRONMENT_UNAVAILABLE',
+            'The target-near-viewport observer could not be created.',
+            { cause, details: { bindingId: config.id } },
+          );
+    }
+  }
+
+  #startConfiguredLoadingPolicy(): void {
+    this.#stopObserving?.();
+    this.#stopObserving = null;
+    if (this.#loadState === 'unloaded') {
+      this.#loadState = 'idle';
+    }
+    this.#autoLoad = this.#config.loading.mode === 'immediate';
+
+    if (this.#autoLoad) {
+      this.#prepareAllFullClips();
+
+      if (this.#desired !== null) {
+        if (
+          this.#activeClipId === this.#desired.clipId &&
+          (this.#loadState === 'metadata' || this.#loadState === 'ready')
+        ) {
+          this.#requestSeek(this.#desired);
+        } else {
+          this.#beginDesiredClip();
+        }
+      }
+      return;
+    }
+
+    if (this.#config.loading.trigger === 'target-near-viewport') {
+      this.#stopObserving = this.#observeNearViewport(this.#config, (): void => {
+        this.#activate(true, true);
+      });
+    }
+
+    if (this.#config.loading.trigger === 'first-use' && this.#desired !== null) {
+      this.#activate(false, true);
     }
   }
 
@@ -1003,7 +1247,7 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#resolveWaiters();
     this.#resolveReadinessWaiters();
 
-    if (this.#desired?.clipId === clipId) {
+    if (this.#activity === 'active' && this.#desired?.clipId === clipId) {
       this.#requestSeek(this.#desired);
     }
   }
@@ -1019,6 +1263,10 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#emit({ type: 'loadready', clipId });
     this.#resolveReadinessWaiters();
 
+    if (this.#activity !== 'active') {
+      return;
+    }
+
     if (this.#supportsVideoFrameCallback()) {
       this.#scheduleFrameObservation();
     } else if (!this.#seekInFlight) {
@@ -1030,20 +1278,24 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#seekInFlight = false;
     this.#seeking = false;
 
-    if (!this.#supportsVideoFrameCallback()) {
+    if (this.#activity === 'active' && !this.#supportsVideoFrameCallback()) {
       this.#presentFrame(this.#target.currentTime, null, null, null);
     }
 
     const pending = this.#pendingSeek;
     this.#pendingSeek = null;
 
-    if (pending !== null && pending.clipId === this.#activeClipId) {
+    if (this.#activity === 'active' && pending !== null && pending.clipId === this.#activeClipId) {
       this.#requestSeek(pending);
     }
   }
 
   #requestSeek(desired: DesiredMediaTarget): void {
-    if (desired.clipId !== this.#activeClipId || this.#loadState === 'loading') {
+    if (
+      this.#activity !== 'active' ||
+      desired.clipId !== this.#activeClipId ||
+      this.#loadState === 'loading'
+    ) {
       return;
     }
 
@@ -1095,7 +1347,11 @@ class NativeVideoRenderer implements VideoRenderer {
   }
 
   #scheduleFrameObservation(): void {
-    if (!this.#supportsVideoFrameCallback() || this.#activeClipId === null) {
+    if (
+      this.#activity !== 'active' ||
+      !this.#supportsVideoFrameCallback() ||
+      this.#activeClipId === null
+    ) {
       return;
     }
 
@@ -1140,7 +1396,7 @@ class NativeVideoRenderer implements VideoRenderer {
   ): void {
     const clipId = this.#activeClipId;
 
-    if (clipId === null || !Number.isFinite(presentedTime)) {
+    if (this.#activity !== 'active' || clipId === null || !Number.isFinite(presentedTime)) {
       return;
     }
 
@@ -1217,7 +1473,7 @@ class NativeVideoRenderer implements VideoRenderer {
     }
   }
 
-  #resetSource(loadState: 'unloaded'): void {
+  #resetSource(loadState: 'idle' | 'unloaded'): void {
     ++this.#generation;
     this.#cancelFrameObservation();
     this.#removeSourceListeners?.();
@@ -1312,4 +1568,5 @@ export const createNativeVideoRenderer = (
   handle: ResolvedVideoTarget,
   onEvent: (event: VideoRendererEvent) => void,
   dependencies: VideoRendererDependencies = defaultDependencies,
-): VideoRenderer => new NativeVideoRenderer(config, handle, onEvent, dependencies);
+  activity: VideoRendererActivity = 'active',
+): VideoRenderer => new NativeVideoRenderer(config, handle, onEvent, dependencies, activity);

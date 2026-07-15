@@ -2,6 +2,7 @@ import { createFrameByFrame } from '../../src/index.js';
 
 import type {
   FrameByFrameController,
+  FrameByFrameBreakpointChangeEvent,
   FrameByFrameState,
   FrameByFrameUpdateEvent,
 } from '../../src/types.js';
@@ -35,6 +36,33 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
         ],
       },
     },
+    reducedMotion: 'last-frame',
+    breakpoints: [
+      {
+        id: 'compact',
+        query: '(max-width: 640px)',
+        override: {
+          axes: {
+            y: {
+              bindings: [
+                {
+                  id: 'intro',
+                  video: { controls: false },
+                  segments: [
+                    {
+                      clip: 'intro-video',
+                      media: [2, 5],
+                      scroll: [0, 1],
+                      scrollUnit: 'progress',
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    ],
   });
 
   controller.on('update', (event: FrameByFrameUpdateEvent) => {
@@ -46,6 +74,12 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
     const time: number = presentedTime;
     void id;
     void time;
+  });
+  controller.on('breakpointchange', (event: FrameByFrameBreakpointChangeEvent) => {
+    const previous: readonly string[] = event.previous;
+    const current: readonly string[] = event.current;
+    void previous;
+    void current;
   });
 
   void controller.load('intro');
@@ -97,5 +131,28 @@ export const verifyControllerTypes = (element: HTMLElement): void => {
         ],
       },
     },
+  });
+
+  createFrameByFrame({
+    axes: { y: { bindings: [] as never } },
+    breakpoints: [
+      {
+        id: 'invalid-target',
+        query: '(max-width: 1px)',
+        override: {
+          axes: {
+            y: {
+              bindings: [
+                {
+                  id: 'intro',
+                  // @ts-expect-error: Responsive overrides cannot replace targets.
+                  target: element as HTMLVideoElement,
+                },
+              ],
+            },
+          },
+        },
+      },
+    ],
   });
 };

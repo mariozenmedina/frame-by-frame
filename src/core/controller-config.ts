@@ -6,6 +6,7 @@ import type {
   FrameByFrameAxisConfig,
   FrameByFrameOptions,
   MediaCrossOrigin,
+  ReducedMotionBehavior,
   Timeline,
   TimelineOptions,
   VideoPreload,
@@ -44,12 +45,16 @@ export interface ControllerBindingConfig {
   readonly id: string;
   readonly axis: AxisName;
   readonly timeline: Timeline;
+  readonly startPosition: number;
+  readonly endPosition: number;
   readonly target: unknown;
   readonly mountTo: unknown;
   readonly clips: readonly ControllerVideoClipConfig[];
   readonly loading: ControllerLoadingConfig;
   readonly video: ControllerVideoOptions;
   readonly timeEpsilon: number;
+  readonly mediaSignature: string;
+  readonly definition: Readonly<Record<string, unknown>>;
 }
 
 export interface ControllerAxisConfig {
@@ -61,6 +66,18 @@ export interface ControllerConfig {
   readonly source: unknown;
   readonly axes: Readonly<Partial<Record<AxisName, ControllerAxisConfig>>>;
   readonly bindings: readonly ControllerBindingConfig[];
+}
+
+export interface ControllerBreakpointConfig {
+  readonly id: string;
+  readonly query: string;
+  readonly override: Readonly<Record<string, unknown>>;
+}
+
+export interface ControllerProgram {
+  readonly base: ControllerConfig;
+  readonly breakpoints: readonly ControllerBreakpointConfig[];
+  readonly reducedMotion: ReducedMotionBehavior;
 }
 
 const AXES = ['x', 'y'] as const;
@@ -76,6 +93,20 @@ const REQUEST_CACHE = [
   'no-cache',
   'force-cache',
   'only-if-cached',
+] as const;
+const REDUCED_MOTION_BEHAVIORS = ['first-frame', 'last-frame', 'disable', 'ignore'] as const;
+const BREAKPOINT_KEYS = ['id', 'query', 'override'] as const;
+const BREAKPOINT_OVERRIDE_KEYS = ['axes'] as const;
+const AXIS_OVERRIDE_KEYS = ['enabled', 'bindings'] as const;
+const BINDING_OVERRIDE_KEYS = [
+  'id',
+  'segments',
+  'clips',
+  'easing',
+  'frame',
+  'loading',
+  'video',
+  'seek',
 ] as const;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -94,6 +125,80 @@ const invalidMediaConfig = (
     details: { ...details, bindingId },
   });
 };
+
+const invalidBreakpoint = (
+  message: string,
+  details: Readonly<Record<string, unknown>>,
+  cause?: unknown,
+): never => {
+  throw new FrameByFrameError('INVALID_BREAKPOINT_CONFIG', message, { cause, details });
+};
+
+const cloneTuple = (value: unknown): unknown =>
+  Array.isArray(value) ? Object.freeze([...(value as unknown[])]) : value;
+
+const cloneSegments = (value: unknown): unknown => {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+
+  return Object.freeze(
+    (value as unknown[]).map((segment: unknown): unknown =>
+      isRecord(segment)
+        ? Object.freeze({
+            ...segment,
+            scroll: cloneTuple(segment['scroll']),
+            media: cloneTuple(segment['media']),
+          })
+        : segment,
+    ),
+  );
+};
+
+const cloneClips = (value: unknown): unknown => {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+
+  return Object.freeze(
+    (value as unknown[]).map((clip: unknown): unknown =>
+      isRecord(clip)
+        ? Object.freeze({
+            ...clip,
+            sources: Array.isArray(clip['sources'])
+              ? Object.freeze(
+                  (clip['sources'] as unknown[]).map((source: unknown): unknown =>
+                    isRecord(source) ? Object.freeze({ ...source }) : source,
+                  ),
+                )
+              : clip['sources'],
+          })
+        : clip,
+    ),
+  );
+};
+
+const cloneOption = (value: unknown): unknown =>
+  isRecord(value) ? Object.freeze({ ...value }) : value;
+
+const createBindingDefinition = (
+  value: Readonly<Record<string, unknown>>,
+  axis: AxisName,
+): Readonly<Record<string, unknown>> =>
+  Object.freeze({
+    id: value['id'],
+    axis,
+    ...(value['renderer'] === undefined ? {} : { renderer: value['renderer'] }),
+    ...(value['target'] === undefined ? {} : { target: value['target'] }),
+    ...(value['mountTo'] === undefined ? {} : { mountTo: value['mountTo'] }),
+    segments: cloneSegments(value['segments']),
+    clips: cloneClips(value['clips']),
+    ...(value['easing'] === undefined ? {} : { easing: value['easing'] }),
+    ...(value['frame'] === undefined ? {} : { frame: cloneOption(value['frame']) }),
+    ...(value['loading'] === undefined ? {} : { loading: cloneOption(value['loading']) }),
+    ...(value['video'] === undefined ? {} : { video: cloneOption(value['video']) }),
+    ...(value['seek'] === undefined ? {} : { seek: cloneOption(value['seek']) }),
+  });
 
 const readAxis = (value: unknown, axis: AxisName): FrameByFrameAxisConfig => {
   if (!isRecord(value)) {
@@ -462,17 +567,28 @@ const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig
   const timeline = createTimeline(timelineOptions);
   const clips = compileClips(value['clips'], id);
   validateSegmentClips(value['segments'], clips, id);
+  const loading = compileLoading(value['loading'], id, clips);
+  const video = compileVideoOptions(value['video'], id);
+  const timeEpsilon = compileTimeEpsilon(value['seek'], id);
+  const segments = value['segments'] as TimelineOptions['segments'];
+  const startPosition = Math.min(...segments.map((segment) => segment.scroll[0]));
+  const endPosition = Math.max(...segments.map((segment) => segment.scroll[1]));
+  const definition = createBindingDefinition(value, axis);
 
   return Object.freeze({
     id,
     axis,
     timeline,
+    startPosition,
+    endPosition,
     target: hasTarget ? value['target'] : undefined,
     mountTo: hasMountTo ? value['mountTo'] : undefined,
     clips,
-    loading: compileLoading(value['loading'], id, clips),
-    video: compileVideoOptions(value['video'], id),
-    timeEpsilon: compileTimeEpsilon(value['seek'], id),
+    loading,
+    video,
+    timeEpsilon,
+    mediaSignature: JSON.stringify({ clips, loading, video, timeEpsilon }),
+    definition,
   });
 };
 
@@ -531,5 +647,401 @@ export const compileControllerConfig = (options: FrameByFrameOptions): Controlle
     source: options.source,
     axes: Object.freeze(axes),
     bindings: Object.freeze(bindings),
+  });
+};
+
+const hasOwn = (value: Readonly<Record<string, unknown>>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const assertKnownKeys = (
+  value: Readonly<Record<string, unknown>>,
+  allowed: readonly string[],
+  breakpointId: string,
+  scope: string,
+): void => {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      invalidBreakpoint(`Breakpoint "${breakpointId}" cannot override "${scope}.${key}".`, {
+        breakpointId,
+        key,
+        scope,
+      });
+    }
+  }
+};
+
+const cloneBindingOverride = (
+  value: unknown,
+  breakpointId: string,
+  axis: AxisName,
+  bindingIds: ReadonlySet<string>,
+): Readonly<Record<string, unknown>> => {
+  if (!isRecord(value)) {
+    return invalidBreakpoint('Each breakpoint binding override must be an object.', {
+      axis,
+      breakpointId,
+      value,
+    });
+  }
+
+  assertKnownKeys(value, BINDING_OVERRIDE_KEYS, breakpointId, `axes.${axis}.bindings`);
+  const id = value['id'];
+
+  if (typeof id !== 'string' || !bindingIds.has(id)) {
+    return invalidBreakpoint(
+      `Breakpoint "${breakpointId}" references an unknown binding on axis "${axis}".`,
+      { axis, bindingId: id, breakpointId },
+    );
+  }
+
+  for (const field of ['segments', 'clips'] as const) {
+    if (hasOwn(value, field) && !Array.isArray(value[field])) {
+      invalidBreakpoint(`Breakpoint binding override "${field}" must be an array.`, {
+        axis,
+        bindingId: id,
+        breakpointId,
+        field,
+      });
+    }
+  }
+
+  for (const field of ['frame', 'loading', 'video', 'seek'] as const) {
+    if (hasOwn(value, field) && !isRecord(value[field])) {
+      invalidBreakpoint(`Breakpoint binding override "${field}" must be an object.`, {
+        axis,
+        bindingId: id,
+        breakpointId,
+        field,
+      });
+    }
+  }
+
+  return Object.freeze({
+    id,
+    ...(hasOwn(value, 'segments') ? { segments: cloneSegments(value['segments']) } : {}),
+    ...(hasOwn(value, 'clips') ? { clips: cloneClips(value['clips']) } : {}),
+    ...(hasOwn(value, 'easing') ? { easing: value['easing'] } : {}),
+    ...(hasOwn(value, 'frame') ? { frame: cloneOption(value['frame']) } : {}),
+    ...(hasOwn(value, 'loading') ? { loading: cloneOption(value['loading']) } : {}),
+    ...(hasOwn(value, 'video') ? { video: cloneOption(value['video']) } : {}),
+    ...(hasOwn(value, 'seek') ? { seek: cloneOption(value['seek']) } : {}),
+  });
+};
+
+const cloneBreakpointOverride = (
+  value: unknown,
+  breakpointId: string,
+  base: ControllerConfig,
+): Readonly<Record<string, unknown>> => {
+  if (!isRecord(value)) {
+    return invalidBreakpoint(`Breakpoint "${breakpointId}" override must be an object.`, {
+      breakpointId,
+      override: value,
+    });
+  }
+
+  assertKnownKeys(value, BREAKPOINT_OVERRIDE_KEYS, breakpointId, 'override');
+  const axesValue = value['axes'];
+
+  if (!isRecord(axesValue) || Object.keys(axesValue).length === 0) {
+    return invalidBreakpoint(`Breakpoint "${breakpointId}" requires at least one axis override.`, {
+      axes: axesValue,
+      breakpointId,
+    });
+  }
+
+  assertKnownKeys(axesValue, AXES, breakpointId, 'axes');
+  const axes: Partial<Record<AxisName, unknown>> = {};
+
+  for (const axis of AXES) {
+    if (!hasOwn(axesValue, axis)) {
+      continue;
+    }
+
+    const axisValue = axesValue[axis];
+    const baseAxis = base.axes[axis];
+
+    if (baseAxis === undefined) {
+      return invalidBreakpoint(`Breakpoint "${breakpointId}" references an unconfigured axis.`, {
+        axis,
+        breakpointId,
+      });
+    }
+
+    if (axisValue === false) {
+      axes[axis] = false;
+      continue;
+    }
+
+    if (!isRecord(axisValue)) {
+      return invalidBreakpoint(`Breakpoint axis "${axis}" must be an object or false.`, {
+        axis,
+        breakpointId,
+        value: axisValue,
+      });
+    }
+
+    assertKnownKeys(axisValue, AXIS_OVERRIDE_KEYS, breakpointId, `axes.${axis}`);
+
+    if (hasOwn(axisValue, 'enabled') && typeof axisValue['enabled'] !== 'boolean') {
+      return invalidBreakpoint(`Breakpoint axis "${axis}" enabled must be a boolean.`, {
+        axis,
+        breakpointId,
+        enabled: axisValue['enabled'],
+      });
+    }
+
+    const bindingIds = new Set(baseAxis.bindings.map((binding) => binding.id));
+    const bindingsValue = axisValue['bindings'];
+
+    if (hasOwn(axisValue, 'bindings') && !Array.isArray(bindingsValue)) {
+      return invalidBreakpoint(`Breakpoint axis "${axis}" bindings must be an array.`, {
+        axis,
+        bindings: bindingsValue,
+        breakpointId,
+      });
+    }
+
+    const seen = new Set<string>();
+    const bindings = Array.isArray(bindingsValue)
+      ? bindingsValue.map((binding) => {
+          const cloned = cloneBindingOverride(binding, breakpointId, axis, bindingIds);
+          const bindingId = cloned['id'] as string;
+
+          if (seen.has(bindingId)) {
+            invalidBreakpoint(
+              `Breakpoint "${breakpointId}" overrides binding "${bindingId}" more than once.`,
+              { axis, bindingId, breakpointId },
+            );
+          }
+
+          seen.add(bindingId);
+          return cloned;
+        })
+      : undefined;
+
+    axes[axis] = Object.freeze({
+      ...(hasOwn(axisValue, 'enabled') ? { enabled: axisValue['enabled'] } : {}),
+      ...(bindings === undefined ? {} : { bindings: Object.freeze(bindings) }),
+    });
+  }
+
+  return Object.freeze({ axes: Object.freeze(axes) });
+};
+
+const compileBreakpoints = (
+  value: unknown,
+  base: ControllerConfig,
+): readonly ControllerBreakpointConfig[] => {
+  if (value === undefined) {
+    return Object.freeze([]);
+  }
+
+  if (!Array.isArray(value)) {
+    return invalidBreakpoint('Controller breakpoints must be an array.', { breakpoints: value });
+  }
+
+  const ids = new Set<string>();
+  const breakpoints = value.map((candidate, index): ControllerBreakpointConfig => {
+    if (!isRecord(candidate)) {
+      return invalidBreakpoint('Each breakpoint must be an object.', {
+        breakpoint: candidate,
+        index,
+      });
+    }
+
+    const provisionalId =
+      typeof candidate['id'] === 'string' && candidate['id'].trim().length > 0
+        ? candidate['id']
+        : `#${String(index)}`;
+    assertKnownKeys(candidate, BREAKPOINT_KEYS, provisionalId, 'breakpoint');
+
+    const id = candidate['id'];
+    const query = candidate['query'];
+
+    if (typeof id !== 'string' || id.trim().length === 0) {
+      return invalidBreakpoint('Each breakpoint requires a non-empty string ID.', { id, index });
+    }
+
+    if (ids.has(id)) {
+      return invalidBreakpoint(`Breakpoint ID "${id}" is duplicated.`, { breakpointId: id });
+    }
+
+    if (typeof query !== 'string' || query.trim().length === 0) {
+      return invalidBreakpoint(`Breakpoint "${id}" requires a non-empty media query.`, {
+        breakpointId: id,
+        query,
+      });
+    }
+
+    ids.add(id);
+    return Object.freeze({
+      id,
+      query,
+      override: cloneBreakpointOverride(candidate['override'], id, base),
+    });
+  });
+
+  return Object.freeze(breakpoints);
+};
+
+const mergeOption = (current: unknown, override: unknown): unknown =>
+  isRecord(current) && isRecord(override)
+    ? Object.freeze({ ...current, ...override })
+    : cloneOption(override);
+
+const mergeBindingDefinition = (
+  current: Readonly<Record<string, unknown>>,
+  override: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> => {
+  const next: Record<string, unknown> = { ...current };
+
+  for (const field of ['segments', 'clips', 'easing'] as const) {
+    if (hasOwn(override, field)) {
+      next[field] = override[field];
+    }
+  }
+
+  for (const field of ['frame', 'loading', 'video', 'seek'] as const) {
+    if (hasOwn(override, field)) {
+      next[field] = mergeOption(current[field], override[field]);
+    }
+  }
+
+  const frame = next['frame'];
+
+  if (isRecord(frame) && frame['snap'] === false) {
+    const withoutFps = { ...frame };
+    delete withoutFps['fps'];
+    next['frame'] = Object.freeze(withoutFps);
+  }
+
+  const loading = next['loading'];
+
+  if (isRecord(loading)) {
+    const normalized = { ...loading };
+
+    if (normalized['mode'] === 'immediate') {
+      delete normalized['trigger'];
+      delete normalized['rootMargin'];
+    } else if (normalized['trigger'] !== 'target-near-viewport') {
+      delete normalized['rootMargin'];
+    }
+
+    next['loading'] = Object.freeze(normalized);
+  }
+
+  return Object.freeze(next);
+};
+
+/** Resolves and revalidates one ordered set of matching breakpoint IDs. */
+export const resolveControllerConfig = (
+  program: ControllerProgram,
+  activeBreakpointIds: readonly string[],
+): ControllerConfig => {
+  const active = new Set(activeBreakpointIds);
+  const axes = new Map<
+    AxisName,
+    { enabled: boolean; bindings: Map<string, Readonly<Record<string, unknown>>> }
+  >();
+
+  for (const axis of AXES) {
+    const baseAxis = program.base.axes[axis];
+
+    if (baseAxis !== undefined) {
+      axes.set(axis, {
+        enabled: baseAxis.enabled,
+        bindings: new Map(
+          baseAxis.bindings.map((binding) => [binding.id, binding.definition] as const),
+        ),
+      });
+    }
+  }
+
+  for (const breakpoint of program.breakpoints) {
+    if (!active.has(breakpoint.id)) {
+      continue;
+    }
+
+    const breakpointAxes = breakpoint.override['axes'] as Readonly<Record<string, unknown>>;
+
+    for (const axis of AXES) {
+      if (!hasOwn(breakpointAxes, axis)) {
+        continue;
+      }
+
+      const target = axes.get(axis);
+      const override = breakpointAxes[axis];
+
+      if (target === undefined) {
+        continue;
+      }
+
+      if (override === false) {
+        target.enabled = false;
+        continue;
+      }
+
+      if (!isRecord(override)) {
+        continue;
+      }
+
+      if (hasOwn(override, 'enabled')) {
+        target.enabled = override['enabled'] as boolean;
+      }
+
+      const bindingOverrides = override['bindings'];
+
+      if (Array.isArray(bindingOverrides)) {
+        for (const bindingOverride of bindingOverrides as Readonly<Record<string, unknown>>[]) {
+          const bindingId = bindingOverride['id'] as string;
+          const current = target.bindings.get(bindingId);
+
+          if (current !== undefined) {
+            target.bindings.set(bindingId, mergeBindingDefinition(current, bindingOverride));
+          }
+        }
+      }
+    }
+  }
+
+  const resolvedAxes: Record<string, unknown> = {};
+
+  for (const [axis, value] of axes) {
+    resolvedAxes[axis] = {
+      enabled: value.enabled,
+      bindings: [...value.bindings.values()],
+    };
+  }
+
+  try {
+    return compileControllerConfig({
+      ...(program.base.source === undefined
+        ? {}
+        : { source: program.base.source as NonNullable<FrameByFrameOptions['source']> }),
+      axes: resolvedAxes,
+    });
+  } catch (cause) {
+    return invalidBreakpoint(
+      'The matching breakpoint cascade does not produce a valid controller configuration.',
+      { activeBreakpoints: Object.freeze([...activeBreakpointIds]) },
+      cause,
+    );
+  }
+};
+
+/** Compiles the immutable base configuration and responsive program at factory time. */
+export const compileControllerProgram = (options: FrameByFrameOptions): ControllerProgram => {
+  const base = compileControllerConfig(options);
+  const reducedMotion = options.reducedMotion ?? 'first-frame';
+
+  if (!REDUCED_MOTION_BEHAVIORS.includes(reducedMotion)) {
+    return invalidController('Controller reducedMotion behavior is invalid.', { reducedMotion });
+  }
+
+  return Object.freeze({
+    base,
+    breakpoints: compileBreakpoints(options.breakpoints, base),
+    reducedMotion,
   });
 };

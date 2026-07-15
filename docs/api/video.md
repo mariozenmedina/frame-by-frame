@@ -153,6 +153,14 @@ controller.on('loadprogress', ({ bindingId, clipId, loadedBytes, totalBytes, rat
 });
 ```
 
+## Responsive media and preferences
+
+A committed breakpoint may replace `clips`, `segments`, or media option fields. The controller keeps the same claimed video target and renderer instance, supersedes obsolete readiness work, releases assets no longer owned by the binding, and applies the latest resolution. The complete candidate is validated first, so an invalid clip/segment combination never partially reconfigures a renderer.
+
+An active reduced-motion preference changes media behavior according to the controller's `reducedMotion` option. `first-frame` and `last-frame` keep normal loading policy but request one timeline endpoint. `disable` cancels new loading, seeking, and frame work and releases package-managed media references; `whenReady()` does not wait for disabled work. Returning to the normal preference restores the configured loading policy and synchronizes the latest scroll resolution. `ignore` leaves media behavior unchanged.
+
+Document visibility suspension is intentionally different from reduced-motion disable. Hiding a document pauses new seek and frame scheduling but keeps full-preload cache references and in-progress network ownership. Visibility restoration refreshes scroll metrics and resumes from the latest desired resolution.
+
 ## Seek scheduling
 
 Timeline media values are seconds. Pixel or progress units apply only to the scroll side of each segment.

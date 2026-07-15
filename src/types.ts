@@ -210,12 +210,65 @@ export interface FrameByFrameAxesConfig {
   readonly y?: false | FrameByFrameAxisConfig;
 }
 
+/** Timeline and media fields that a responsive breakpoint may replace or merge. */
+export interface FrameByFrameBindingOverride {
+  /** Existing binding ID selected for this override. */
+  readonly id: string;
+  /** Replaces the binding's complete segment collection. */
+  readonly segments?: readonly TimelineSegment[];
+  /** Replaces the binding's complete clip collection. */
+  readonly clips?: readonly VideoClipConfig[];
+  /** Overrides the timeline-level easing default. */
+  readonly easing?: Easing;
+  /** Shallowly overrides frame snapping options. */
+  readonly frame?: FrameConfig;
+  /** Shallowly overrides loading options. */
+  readonly loading?: VideoLoadingConfig;
+  /** Shallowly overrides native video properties. */
+  readonly video?: VideoRendererConfig;
+  /** Shallowly overrides native seek options. */
+  readonly seek?: VideoSeekConfig;
+}
+
+/** Responsive changes for one existing controller axis. */
+export interface FrameByFrameAxisOverride {
+  /** Disables or re-enables the axis without removing its bindings. */
+  readonly enabled?: boolean;
+  /** Overrides merged into existing bindings by stable ID. */
+  readonly bindings?: readonly FrameByFrameBindingOverride[];
+}
+
+/** Responsive changes scoped to existing axes and bindings. */
+export interface FrameByFrameBreakpointOverride {
+  readonly axes: {
+    readonly x?: false | FrameByFrameAxisOverride;
+    readonly y?: false | FrameByFrameAxisOverride;
+  };
+}
+
+/** One ordered media-query override in the responsive cascade. */
+export interface FrameByFrameBreakpointConfig {
+  /** Unique stable ID exposed by controller state and events. */
+  readonly id: string;
+  /** Media query evaluated only after mount. */
+  readonly query: string;
+  /** Partial configuration applied while the query matches. */
+  readonly override: FrameByFrameBreakpointOverride;
+}
+
+/** How an active reduced-motion preference affects media bindings. */
+export type ReducedMotionBehavior = 'first-frame' | 'last-frame' | 'disable' | 'ignore';
+
 /** Configuration captured by `createFrameByFrame`. */
 export interface FrameByFrameOptions {
   /** Scroll source resolved during mount; omission selects the document. */
   readonly source?: ScrollSourceReference;
   /** At least one configured axis with one binding is required. */
   readonly axes: FrameByFrameAxesConfig;
+  /** Ordered responsive overrides; later matching entries win. */
+  readonly breakpoints?: readonly FrameByFrameBreakpointConfig[];
+  /** Reduced-motion behavior; defaults to first-frame. */
+  readonly reducedMotion?: ReducedMotionBehavior;
 }
 
 /** Controller lifecycle states. */
@@ -271,17 +324,34 @@ export interface FrameByFrameState {
   readonly enabled: boolean;
   readonly source: ScrollSource | null;
   readonly activeBreakpoints: readonly string[];
+  readonly prefersReducedMotion: boolean;
   readonly axes: Readonly<Partial<Record<AxisName, FrameByFrameAxisState>>>;
   readonly bindings: Readonly<Record<string, FrameByFrameBindingState>>;
   readonly lastError: FrameByFrameErrorInfo | null;
 }
 
 /** Why the controller published an update snapshot. */
-export type FrameByFrameUpdateReason = 'mount' | 'scroll' | 'refresh' | 'enable' | 'disable';
+export type FrameByFrameUpdateReason =
+  | 'mount'
+  | 'scroll'
+  | 'refresh'
+  | 'enable'
+  | 'disable'
+  | 'breakpoint'
+  | 'preference'
+  | 'resize'
+  | 'visibility';
 
 /** Payload emitted after one coalesced controller update. */
 export interface FrameByFrameUpdateEvent {
   readonly reason: FrameByFrameUpdateReason;
+  readonly state: FrameByFrameState;
+}
+
+/** Payload emitted after the active responsive cascade changes successfully. */
+export interface FrameByFrameBreakpointChangeEvent {
+  readonly previous: readonly string[];
+  readonly current: readonly string[];
   readonly state: FrameByFrameState;
 }
 
@@ -322,6 +392,7 @@ export interface FrameByFrameFrameEvent extends FrameByFrameBindingEvent {
 export interface FrameByFrameEventMap {
   readonly mount: FrameByFrameState;
   readonly update: FrameByFrameUpdateEvent;
+  readonly breakpointchange: FrameByFrameBreakpointChangeEvent;
   readonly loadstart: FrameByFrameBindingEvent;
   readonly loadprogress: FrameByFrameLoadProgressEvent;
   readonly loadedmetadata: FrameByFrameLoadedMetadataEvent;
@@ -359,6 +430,7 @@ export type FrameByFrameErrorCode =
   | 'INVALID_FRAME_RATE'
   | 'INVALID_EASING_RESULT'
   | 'INVALID_CONTROLLER'
+  | 'INVALID_BREAKPOINT_CONFIG'
   | 'DUPLICATE_BINDING_ID'
   | 'ENVIRONMENT_UNAVAILABLE'
   | 'SOURCE_NOT_FOUND'

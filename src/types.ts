@@ -86,11 +86,82 @@ export type ScrollSource = Document | HTMLElement;
 /** A direct, selected, or lazily resolved scroll source. */
 export type ScrollSourceReference = ScrollSource | string | (() => ScrollSource | null);
 
-/** One named timeline controlled by a scroll axis. */
-export interface FrameByFrameBindingConfig extends TimelineOptions {
+/** A direct, selected, or lazily resolved DOM element. */
+export type ElementReference<T extends Element = HTMLElement> = T | string | (() => T | null);
+
+/** The native renderer implemented by the current package stage. */
+export type RendererType = 'video';
+
+/** Native browser preload hints supported by video clips. */
+export type VideoPreload = 'none' | 'metadata' | 'auto';
+
+/** Valid values for the media element crossorigin attribute. */
+export type MediaCrossOrigin = '' | 'anonymous' | 'use-credentials';
+
+/** One ordered candidate for a video clip. */
+export interface VideoSourceConfig {
+  /** URL assigned to the video element when this candidate is selected. */
+  readonly src: string;
+  /** Optional MIME type, including codecs when known. */
+  readonly type?: string;
+}
+
+/** One logical media asset that timeline segments may select by ID. */
+export interface VideoClipConfig {
+  /** Unique clip ID within one binding. */
+  readonly id: string;
+  /** Ordered source candidates for the same content. */
+  readonly sources: readonly VideoSourceConfig[];
+  /** Optional poster applied while this clip is active. */
+  readonly poster?: string;
+  /** Optional CORS mode applied before the selected source. */
+  readonly crossOrigin?: MediaCrossOrigin;
+  /** Native preload hint; defaults to metadata. */
+  readonly preload?: VideoPreload;
+}
+
+/** Property overrides for a supplied or package-created video target. */
+export interface VideoRendererConfig {
+  readonly muted?: boolean;
+  readonly playsInline?: boolean;
+  readonly controls?: boolean;
+  readonly loop?: boolean;
+}
+
+/** Bounded native seek scheduling options. */
+export interface VideoSeekConfig {
+  /** Smallest meaningful target-time change in seconds; defaults to 0.001. */
+  readonly timeEpsilon?: number;
+}
+
+/** Timeline and video configuration shared by both target ownership modes. */
+export interface FrameByFrameBindingBaseConfig extends TimelineOptions {
   /** Unique binding ID within one controller. */
   readonly id: string;
+  /** Native video is the default and only renderer in this stage. */
+  readonly renderer?: 'video';
+  /** Non-empty logical clips referenced by timeline segments. */
+  readonly clips: readonly VideoClipConfig[];
+  /** Optional video property overrides. */
+  readonly video?: VideoRendererConfig;
+  /** Optional native seek scheduler settings. */
+  readonly seek?: VideoSeekConfig;
 }
+
+/** One named video timeline controlled by a scroll axis. */
+export type FrameByFrameBindingConfig = FrameByFrameBindingBaseConfig &
+  (
+    | {
+        /** Existing video target resolved during mount. */
+        readonly target: ElementReference<HTMLVideoElement>;
+        readonly mountTo?: never;
+      }
+    | {
+        readonly target?: never;
+        /** Container where the package creates and owns a video target. */
+        readonly mountTo: ElementReference;
+      }
+  );
 
 /** Configuration for one independent scroll axis. */
 export interface FrameByFrameAxisConfig {
@@ -138,7 +209,19 @@ export interface FrameByFrameBindingState {
   readonly id: string;
   readonly axis: AxisName;
   readonly resolution: TimelineResolution | null;
+  readonly renderer: RendererType;
+  readonly loadState: VideoLoadState;
+  readonly activeClipId: string | null;
+  readonly selectedSource: string | null;
+  readonly duration: number | null;
+  readonly appliedTime: number | null;
+  readonly presentedTime: number | null;
+  readonly seeking: boolean;
+  readonly error: FrameByFrameErrorInfo | null;
 }
+
+/** Native media readiness for a controller binding. */
+export type VideoLoadState = 'idle' | 'loading' | 'metadata' | 'ready' | 'error' | 'unloaded';
 
 /** Detached controller state for debugging and framework integration. */
 export interface FrameByFrameState {
@@ -160,10 +243,41 @@ export interface FrameByFrameUpdateEvent {
   readonly state: FrameByFrameState;
 }
 
+/** Shared identity and state included by media lifecycle events. */
+export interface FrameByFrameBindingEvent {
+  readonly bindingId: string;
+  readonly clipId: string;
+  readonly state: FrameByFrameState;
+}
+
+/** Metadata became available for the selected clip. */
+export interface FrameByFrameLoadedMetadataEvent extends FrameByFrameBindingEvent {
+  readonly duration: number | null;
+}
+
+/** A meaningful seek was submitted to the native video target. */
+export interface FrameByFrameSeekRequestEvent extends FrameByFrameBindingEvent {
+  readonly requestedTime: number;
+  readonly targetTime: number;
+}
+
+/** A frame was observed at or near browser composition. */
+export interface FrameByFrameFrameEvent extends FrameByFrameBindingEvent {
+  readonly presentedTime: number;
+  readonly expectedDisplayTime: number | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
 /** Public event payloads available in the controller foundation. */
 export interface FrameByFrameEventMap {
   readonly mount: FrameByFrameState;
   readonly update: FrameByFrameUpdateEvent;
+  readonly loadstart: FrameByFrameBindingEvent;
+  readonly loadedmetadata: FrameByFrameLoadedMetadataEvent;
+  readonly loadready: FrameByFrameBindingEvent;
+  readonly seekrequest: FrameByFrameSeekRequestEvent;
+  readonly frame: FrameByFrameFrameEvent;
   readonly error: FrameByFrameErrorInfo;
   readonly destroy: FrameByFrameState;
 }
@@ -174,6 +288,9 @@ export interface FrameByFrameController {
   refresh(): void;
   enable(): void;
   disable(): void;
+  load(bindingId?: string): Promise<void>;
+  unload(bindingId?: string): void;
+  getTarget(bindingId: string): HTMLVideoElement | null;
   getState(): FrameByFrameState;
   on<EventName extends keyof FrameByFrameEventMap>(
     event: EventName,
@@ -194,7 +311,15 @@ export type FrameByFrameErrorCode =
   | 'ENVIRONMENT_UNAVAILABLE'
   | 'SOURCE_NOT_FOUND'
   | 'INVALID_LIFECYCLE_OPERATION'
-  | 'CONTROLLER_DESTROYED';
+  | 'CONTROLLER_DESTROYED'
+  | 'INVALID_MEDIA_CONFIG'
+  | 'TARGET_NOT_FOUND'
+  | 'INVALID_TARGET_TYPE'
+  | 'TARGET_CONFLICT'
+  | 'MEDIA_SOURCE_UNSUPPORTED'
+  | 'MEDIA_LOAD_FAILED'
+  | 'MEDIA_DECODE_FAILED'
+  | 'MEDIA_SEEK_FAILED';
 
 /** Structured context attached to a `FrameByFrameError`. */
 export type FrameByFrameErrorDetails = Readonly<Record<string, unknown>>;

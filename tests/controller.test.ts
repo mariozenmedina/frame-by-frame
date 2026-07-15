@@ -8,7 +8,116 @@ import { createFrameByFrame } from '../src/index.js';
 import { createFakeScrollEnvironment } from './helpers/fake-scroll-source.js';
 
 import type { ControllerDependencies } from '../src/core/controller.js';
-import type { FrameByFrameOptions } from '../src/types.js';
+import type {
+  VideoRenderer,
+  VideoRendererEvent,
+  VideoRendererState,
+} from '../src/media/video-renderer.js';
+import type {
+  FrameByFrameErrorInfo,
+  FrameByFrameFrameEvent,
+  FrameByFrameLoadedMetadataEvent,
+  FrameByFrameOptions,
+  TimelineResolution,
+} from '../src/types.js';
+
+const createTargetReference = (): HTMLVideoElement => {
+  const attributes = new Map<string, string>();
+  const listeners = new Map<string, Set<EventListener>>();
+
+  return {
+    nodeType: 1,
+    localName: 'video',
+    currentTime: 0,
+    duration: Number.NaN,
+    error: null,
+    srcObject: null,
+    muted: false,
+    defaultMuted: false,
+    playsInline: false,
+    controls: false,
+    loop: false,
+    autoplay: false,
+    preload: '',
+    poster: '',
+    crossOrigin: null,
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject | null) => {
+      if (typeof listener === 'function') {
+        const set = listeners.get(type) ?? new Set<EventListener>();
+        set.add(listener);
+        listeners.set(type, set);
+      }
+    },
+    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject | null) => {
+      if (typeof listener === 'function') {
+        listeners.get(type)?.delete(listener);
+      }
+    },
+    canPlayType: () => 'probably',
+    load: () => undefined,
+    pause: () => undefined,
+    getAttribute: (name: string) => attributes.get(name) ?? null,
+    setAttribute: (name: string, value: string) => {
+      attributes.set(name, value);
+    },
+    removeAttribute: (name: string) => {
+      attributes.delete(name);
+    },
+  } as unknown as HTMLVideoElement;
+};
+
+const createClip = (id: string) => ({ id, sources: [{ src: `${id}.mp4` }] });
+
+class TestVideoRenderer implements VideoRenderer {
+  readonly target: HTMLVideoElement;
+  readonly resolutions: (TimelineResolution | null)[] = [];
+  readonly onEvent: (event: VideoRendererEvent) => void;
+  loadCalls = 0;
+  unloadCalls = 0;
+  destroyCalls = 0;
+  state: VideoRendererState = {
+    loadState: 'idle',
+    activeClipId: null,
+    selectedSource: null,
+    duration: null,
+    appliedTime: null,
+    presentedTime: null,
+    seeking: false,
+    error: null,
+  };
+
+  constructor(target: HTMLVideoElement, onEvent: (event: VideoRendererEvent) => void) {
+    this.target = target;
+    this.onEvent = onEvent;
+  }
+
+  setResolution(resolution: TimelineResolution | null): void {
+    this.resolutions.push(resolution);
+  }
+
+  load(): Promise<void> {
+    this.loadCalls += 1;
+    return Promise.resolve();
+  }
+
+  unload(): void {
+    this.unloadCalls += 1;
+    this.state = { ...this.state, loadState: 'unloaded' };
+  }
+
+  getTarget(): HTMLVideoElement {
+    return this.target;
+  }
+
+  getState(): VideoRendererState {
+    return this.state;
+  }
+
+  destroy(): void {
+    this.destroyCalls += 1;
+    this.state = { ...this.state, loadState: 'unloaded' };
+  }
+}
 
 const createOptions = (source: HTMLElement): FrameByFrameOptions => ({
   source,
@@ -18,6 +127,8 @@ const createOptions = (source: HTMLElement): FrameByFrameOptions => ({
       bindings: [
         {
           id: 'horizontal',
+          target: createTargetReference(),
+          clips: [createClip('horizontal')],
           segments: [{ media: [0, 5], scroll: [0, 100] }],
         },
       ],
@@ -26,10 +137,14 @@ const createOptions = (source: HTMLElement): FrameByFrameOptions => ({
       bindings: [
         {
           id: 'pixels',
+          target: createTargetReference(),
+          clips: [createClip('intro')],
           segments: [{ clip: 'intro', media: [0, 10], scroll: [0, 100] }],
         },
         {
           id: 'progress',
+          target: createTargetReference(),
+          clips: [createClip('ending')],
           segments: [
             {
               clip: 'ending',
@@ -49,18 +164,26 @@ const createDependencies = (
 ): {
   readonly dependencies: ControllerDependencies;
   readonly environment: ReturnType<typeof createFakeScrollEnvironment>;
+  readonly renderers: TestVideoRenderer[];
 } => {
   const environment = createFakeScrollEnvironment();
+  const renderers: TestVideoRenderer[] = [];
   const reportAsyncError = (error: unknown): void => {
     errors.push(error);
   };
 
   return {
     environment,
+    renderers,
     dependencies: {
       resolveSource: resolveScrollSource,
       sourceRegistry: new SourceRegistry(reportAsyncError),
       reportAsyncError,
+      createVideoRenderer: (config, onEvent) => {
+        const renderer = new TestVideoRenderer(config.target as HTMLVideoElement, onEvent);
+        renderers.push(renderer);
+        return renderer;
+      },
     },
   };
 };
@@ -70,7 +193,14 @@ describe('createFrameByFrame controller', () => {
     const controller = createFrameByFrame({
       axes: {
         y: {
-          bindings: [{ id: 'intro', segments: [{ media: [0, 1], scroll: [0, 1] }] }],
+          bindings: [
+            {
+              id: 'intro',
+              target: '#intro',
+              clips: [createClip('intro')],
+              segments: [{ media: [0, 1], scroll: [0, 1] }],
+            },
+          ],
         },
       },
     });
@@ -186,6 +316,135 @@ describe('createFrameByFrame controller', () => {
     });
   });
 
+  it('exposes mounted media targets and binding-scoped load controls', async () => {
+    const { dependencies, environment, renderers } = createDependencies();
+    const controller = createController(
+      createOptions(environment.element as unknown as HTMLElement),
+      dependencies,
+    );
+
+    expect(controller.getTarget('pixels')).toBeNull();
+    await controller.mount();
+    expect(controller.getTarget('pixels')).toBe(renderers[1]?.target);
+
+    await controller.load('pixels');
+    expect(renderers.map(({ loadCalls }) => loadCalls)).toEqual([0, 1, 0]);
+    await controller.load();
+    expect(renderers.map(({ loadCalls }) => loadCalls)).toEqual([1, 2, 1]);
+
+    controller.unload('progress');
+    expect(renderers.map(({ unloadCalls }) => unloadCalls)).toEqual([0, 0, 1]);
+    controller.unload();
+    expect(renderers.map(({ unloadCalls }) => unloadCalls)).toEqual([1, 1, 2]);
+    expect(() => controller.getTarget('missing')).toThrow(
+      expect.objectContaining({ code: 'INVALID_CONTROLLER' }),
+    );
+
+    controller.destroy();
+    expect(renderers.map(({ destroyCalls }) => destroyCalls)).toEqual([1, 1, 1]);
+  });
+
+  it('forwards media events with current binding state without failing the controller', async () => {
+    const { dependencies, environment, renderers } = createDependencies();
+    const controller = createController(
+      createOptions(environment.element as unknown as HTMLElement),
+      dependencies,
+    );
+    const loadedMetadata = vi.fn<(event: FrameByFrameLoadedMetadataEvent) => void>();
+    const frames = vi.fn<(event: FrameByFrameFrameEvent) => void>();
+    const errors = vi.fn<(error: FrameByFrameErrorInfo) => void>();
+    controller.on('loadedmetadata', loadedMetadata);
+    controller.on('frame', frames);
+    controller.on('error', errors);
+    await controller.mount();
+    const renderer = renderers[1];
+
+    if (renderer === undefined) {
+      throw new Error('Expected the pixels renderer to be mounted.');
+    }
+
+    renderer.state = {
+      ...renderer.state,
+      loadState: 'metadata',
+      activeClipId: 'intro',
+      selectedSource: 'intro.mp4',
+      duration: 8,
+      appliedTime: 2,
+      presentedTime: 2.01,
+    };
+    renderer.onEvent({ type: 'loadstart', clipId: 'intro' });
+    renderer.onEvent({ type: 'loadedmetadata', clipId: 'intro', duration: 8 });
+    renderer.onEvent({ type: 'loadready', clipId: 'intro' });
+    renderer.onEvent({
+      type: 'seekrequest',
+      clipId: 'intro',
+      requestedTime: 2,
+      targetTime: 2,
+    });
+    renderer.onEvent({
+      type: 'frame',
+      clipId: 'intro',
+      presentedTime: 2.01,
+      expectedDisplayTime: 16,
+      width: 1920,
+      height: 1080,
+    });
+
+    const metadataEvent = loadedMetadata.mock.calls.at(-1)?.[0];
+    expect(metadataEvent).toMatchObject({
+      bindingId: 'pixels',
+      clipId: 'intro',
+      duration: 8,
+    });
+    expect(metadataEvent?.state.status).toBe('ready');
+    expect(frames).toHaveBeenCalledWith(
+      expect.objectContaining({ presentedTime: 2.01, width: 1920, height: 1080 }),
+    );
+
+    const mediaError = new FrameByFrameError('MEDIA_LOAD_FAILED', 'load failed', {
+      details: { bindingId: 'pixels', clipId: 'intro' },
+    });
+    renderer.state = { ...renderer.state, loadState: 'error', error: mediaError };
+    renderer.onEvent({ type: 'error', error: mediaError });
+
+    expect(controller.getState()).toMatchObject({
+      status: 'ready',
+      lastError: null,
+      bindings: { pixels: { loadState: 'error', error: { code: 'MEDIA_LOAD_FAILED' } } },
+    });
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({ code: 'MEDIA_LOAD_FAILED' }));
+  });
+
+  it('cleans up already-created renderers when target setup fails during mount', async () => {
+    const { dependencies, environment } = createDependencies();
+    const created: TestVideoRenderer[] = [];
+    let attempts = 0;
+    const controller = createController(
+      createOptions(environment.element as unknown as HTMLElement),
+      {
+        ...dependencies,
+        createVideoRenderer: (config, onEvent) => {
+          attempts += 1;
+
+          if (attempts === 2) {
+            throw new FrameByFrameError('TARGET_NOT_FOUND', 'missing target');
+          }
+
+          const renderer = new TestVideoRenderer(config.target as HTMLVideoElement, onEvent);
+          created.push(renderer);
+          return renderer;
+        },
+      },
+    );
+
+    await expect(controller.mount()).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND' });
+    expect(created[0]?.destroyCalls).toBe(1);
+    expect(controller.getState()).toMatchObject({
+      status: 'error',
+      lastError: { code: 'TARGET_NOT_FOUND' },
+    });
+  });
+
   it('rejects invalid lifecycle operations and all post-destroy operations except state reads', () => {
     const { dependencies, environment } = createDependencies();
     const controller = createController(
@@ -195,6 +454,12 @@ describe('createFrameByFrame controller', () => {
 
     expect(() => {
       controller.refresh();
+    }).toThrow(expect.objectContaining({ code: 'INVALID_LIFECYCLE_OPERATION' }));
+    expect(() => {
+      void controller.load();
+    }).toThrow(expect.objectContaining({ code: 'INVALID_LIFECYCLE_OPERATION' }));
+    expect(() => {
+      controller.unload();
     }).toThrow(expect.objectContaining({ code: 'INVALID_LIFECYCLE_OPERATION' }));
     controller.destroy();
 
@@ -207,6 +472,15 @@ describe('createFrameByFrame controller', () => {
     }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
     expect(() => {
       controller.refresh();
+    }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
+    expect(() => {
+      void controller.load();
+    }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
+    expect(() => {
+      controller.unload();
+    }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
+    expect(() => {
+      controller.getTarget('pixels');
     }).toThrow(expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }));
     expect(() => controller.on('mount', vi.fn())).toThrow(
       expect.objectContaining({ code: 'CONTROLLER_DESTROYED' }),
@@ -334,7 +608,14 @@ describe('createFrameByFrame controller', () => {
       source: environment.element as unknown as HTMLElement,
       axes: {
         y: {
-          bindings: [{ id: 'public', segments: [{ media: [0, 1], scroll: [0, 1] }] }],
+          bindings: [
+            {
+              id: 'public',
+              target: createTargetReference(),
+              clips: [createClip('public')],
+              segments: [{ media: [0, 1], scroll: [0, 1] }],
+            },
+          ],
         },
       },
     });
@@ -355,7 +636,7 @@ describe('createFrameByFrame controller', () => {
   });
 
   it('enters error state and unsubscribes after a runtime mapping failure', async () => {
-    const { dependencies, environment } = createDependencies();
+    const { dependencies, environment, renderers } = createDependencies();
     environment.element.scrollHeight = 200;
     environment.element.clientHeight = 100;
     const controller = createController(
@@ -366,6 +647,8 @@ describe('createFrameByFrame controller', () => {
             bindings: [
               {
                 id: 'failing',
+                target: createTargetReference(),
+                clips: [createClip('failing')],
                 easing: () => {
                   throw new Error('easing failed');
                 },
@@ -391,12 +674,20 @@ describe('createFrameByFrame controller', () => {
     });
     expect(environment.element.listeners).toHaveLength(0);
     expect(emitted).toHaveBeenCalledOnce();
+    expect(renderers[0]?.destroyCalls).toBe(1);
+
+    environment.element.scrollTop = 0;
+    await controller.mount();
+    expect(controller.getState()).toMatchObject({ status: 'ready', lastError: null });
+    expect(renderers).toHaveLength(2);
   });
 });
 
 describe('controller configuration', () => {
   const validBinding = {
     id: 'binding',
+    target: createTargetReference(),
+    clips: [createClip('binding')],
     segments: [{ media: [0, 1], scroll: [0, 1] }],
   } as const;
 
@@ -431,6 +722,60 @@ describe('controller configuration', () => {
     expect(() => createFrameByFrame({ axes: { x: false, y: false } })).toThrow(
       expect.objectContaining({ code: 'INVALID_CONTROLLER' }),
     );
+  });
+
+  it.each([
+    [{ ...validBinding, renderer: 'canvas' }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, target: undefined }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, mountTo: {}, target: {} }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, target: 1 }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, clips: [] }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, clips: [createClip('same'), createClip('same')] }, 'INVALID_MEDIA_CONFIG'],
+    [
+      { ...validBinding, clips: [{ id: '', sources: [{ src: '/video.mp4' }] }] },
+      'INVALID_MEDIA_CONFIG',
+    ],
+    [{ ...validBinding, clips: [{ id: 'clip', sources: [] }] }, 'INVALID_MEDIA_CONFIG'],
+    [
+      { ...validBinding, clips: [{ id: 'clip', sources: [{ src: '', type: 'video/mp4' }] }] },
+      'INVALID_MEDIA_CONFIG',
+    ],
+    [
+      { ...validBinding, clips: [{ id: 'clip', sources: [{ src: '/video', type: '' }] }] },
+      'INVALID_MEDIA_CONFIG',
+    ],
+    [{ ...validBinding, video: { muted: 'yes' } }, 'INVALID_MEDIA_CONFIG'],
+    [{ ...validBinding, seek: { timeEpsilon: -1 } }, 'INVALID_MEDIA_CONFIG'],
+  ])('rejects invalid media configuration %#', (binding, code) => {
+    expect(() => createFrameByFrame({ axes: { y: { bindings: [binding as never] } } })).toThrow(
+      expect.objectContaining({ code }),
+    );
+  });
+
+  it('requires explicit, known clip IDs for multi-clip timelines', () => {
+    const clips = [createClip('intro'), createClip('detail')];
+
+    expect(() =>
+      createFrameByFrame({
+        axes: { y: { bindings: [{ ...validBinding, clips }] } },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_MEDIA_CONFIG' }));
+
+    expect(() =>
+      createFrameByFrame({
+        axes: {
+          y: {
+            bindings: [
+              {
+                ...validBinding,
+                clips,
+                segments: [{ clip: 'missing', media: [0, 1], scroll: [0, 1] }],
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_MEDIA_CONFIG' }));
   });
 
   it('keeps FrameByFrameError details immutable', () => {

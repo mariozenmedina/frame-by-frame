@@ -68,6 +68,8 @@ interface FrameByFrameOptions {
     readonly x?: false | FrameByFrameAxisConfig;
     readonly y?: false | FrameByFrameAxisConfig;
   };
+  readonly breakpoints?: readonly FrameByFrameBreakpointConfig[];
+  readonly reducedMotion?: 'first-frame' | 'last-frame' | 'disable' | 'ignore';
 }
 
 interface FrameByFrameAxisConfig {
@@ -102,6 +104,54 @@ At least one axis must contain a binding. Binding IDs must be non-empty and uniq
 
 Pure configuration and timelines are validated and compiled by `createFrameByFrame()`. The source itself is resolved later by `mount()`.
 
+## Responsive overrides
+
+Each breakpoint requires a stable `id`, a CSS media `query`, and an `override`. Queries are created only by `mount()`, keeping package import and controller creation SSR-safe.
+
+```ts
+breakpoints: [
+  {
+    id: 'tablet',
+    query: '(max-width: 900px)',
+    override: {
+      axes: {
+        y: {
+          bindings: [
+            {
+              id: 'story',
+              segments: [{ scroll: [0, 600], clip: 'short', media: [0, 5] }],
+              clips: [{ id: 'short', sources: [{ src: '/story-short.mp4' }] }],
+              video: { controls: false },
+            },
+          ],
+        },
+      },
+    },
+  },
+];
+```
+
+Every matching breakpoint is applied in declaration order, so later entries win. Overrides may only reference existing axes and binding IDs. `segments` and `clips` replace their complete arrays; `frame`, `loading`, `video`, and `seek` are shallowly merged. Setting an axis to `false` disables it, while a later `{ enabled: true }` re-enables it.
+
+Responsive overrides cannot replace the controller source, binding IDs, axes, renderer type, `target`, or `mountTo`. The complete candidate is recompiled before activation. If the cascade is invalid—for example, replacement segments refer to a clip no longer present—the controller keeps its last valid configuration, remains mounted, stores and emits `INVALID_BREAKPOINT_CONFIG`, and does not emit `breakpointchange`.
+
+Mounted renderers and claimed targets are reused. A media change supersedes obsolete readiness work; a pending `whenReady()` follows the latest committed configuration.
+
+## Reduced motion, resize, and visibility
+
+`reducedMotion` defaults to `first-frame` and follows `(prefers-reduced-motion: reduce)` after mount:
+
+| Value         | Behavior                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| `first-frame` | Keeps each enabled binding at its first timeline endpoint.                                 |
+| `last-frame`  | Keeps each enabled binding at its last timeline endpoint.                                  |
+| `disable`     | Stops loading, seeking, and frame work and releases package-managed media references.      |
+| `ignore`      | Preserves normal scroll-driven behavior. Use only after making an explicit product choice. |
+
+The controller remains mounted and never prevents native scrolling in any mode. Preference changes emit an `update` with reason `preference`.
+
+Window resize events and `ResizeObserver`, when available, share one animation-frame-coalesced refresh path. `refresh()` remains the explicit guarantee for content changes that browser observers cannot detect. While the owning document is hidden, the controller unsubscribes from scroll work and suspends new media frame work without unloading its cache. Visibility restoration refreshes metrics and synchronizes the latest position.
+
 ## Scroll sources
 
 When `source` is omitted, the controller uses the current `Document`. A string is queried against the current document, and a function is called synchronously on every mount attempt. Resolver functions are useful when framework refs or elements are not available during controller creation.
@@ -119,7 +169,7 @@ All active controllers for the same canonical source share:
 - at most one pending `requestAnimationFrame` callback;
 - one offset read per axis during each scheduled frame.
 
-The raw scroll listener only schedules work. It performs no dimension or offset reads. Maximum ranges are measured by `mount()` and `refresh()`, while scheduled frames read current offsets and distribute an immutable snapshot to subscribers.
+The raw scroll listener only schedules work. It performs no dimension or offset reads. Maximum ranges are measured by `mount()`, `refresh()`, and coalesced resize observation, while scheduled frames read current offsets and distribute an immutable snapshot to subscribers.
 
 When the final subscriber disables or destroys itself, the listener is removed and any pending animation frame is cancelled.
 
@@ -151,6 +201,7 @@ interface FrameByFrameState {
   readonly enabled: boolean;
   readonly source: Document | HTMLElement | null;
   readonly activeBreakpoints: readonly string[];
+  readonly prefersReducedMotion: boolean;
   readonly axes: Readonly<Partial<Record<'x' | 'y', FrameByFrameAxisState>>>;
   readonly bindings: Readonly<Record<string, FrameByFrameBindingState>>;
   readonly lastError: FrameByFrameErrorInfo | null;
@@ -159,22 +210,23 @@ interface FrameByFrameState {
 
 Axis state contains `enabled`, `offset`, `max`, and `progress`. Binding state contains its `id`, axis, `TimelineResolution | null`, renderer type, load state, full-preload progress by clip ID, active clip and source, known duration, applied and presented times, seeking flag, and binding-scoped media error. Snapshots and their collections are detached from controller internals.
 
-`activeBreakpoints` is an empty reserved field until responsive overrides are implemented. Media failures are stored on the affected binding. They emit `error` but do not change the controller status or `lastError`; controller/source/mapping failures do.
+`activeBreakpoints` lists the successfully committed matching IDs in declaration order. `prefersReducedMotion` reports the current media preference independently from the configured behavior. Media failures are stored on the affected binding. They emit `error` but do not change the controller status or `lastError`; source and mapping failures do. A rejected responsive transition stores `lastError` while preserving the mounted status and last valid configuration.
 
 ## Events
 
-| Event            | Payload                                                                                                   |
-| ---------------- | --------------------------------------------------------------------------------------------------------- |
-| `mount`          | The first successfully mounted state snapshot.                                                            |
-| `update`         | `{ reason, state }`, where reason is `mount`, `scroll`, `refresh`, `enable`, or `disable`.                |
-| `loadstart`      | Binding and clip identity plus current state after a source candidate starts.                             |
-| `loadprogress`   | Binding and clip identity, loaded bytes, nullable total/ratio, and current state.                         |
-| `loadedmetadata` | Binding and clip identity, duration, and current state.                                                   |
-| `loadready`      | Binding and clip identity plus current state after native `loadeddata`.                                   |
-| `seekrequest`    | Binding and clip identity, requested timeline time, bounded target time, and current state.               |
-| `frame`          | Binding and clip identity, presented media time, optional display time and dimensions, and current state. |
-| `error`          | A `FrameByFrameError` produced by target setup, media, source, or runtime mapping.                        |
-| `destroy`        | The final destroyed state snapshot.                                                                       |
+| Event              | Payload                                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `mount`            | The first successfully mounted state snapshot.                                                                  |
+| `update`           | `{ reason, state }`; reasons include lifecycle, scroll, breakpoint, preference, resize, and visibility changes. |
+| `breakpointchange` | Previous and current committed breakpoint IDs plus current state.                                               |
+| `loadstart`        | Binding and clip identity plus current state after a source candidate starts.                                   |
+| `loadprogress`     | Binding and clip identity, loaded bytes, nullable total/ratio, and current state.                               |
+| `loadedmetadata`   | Binding and clip identity, duration, and current state.                                                         |
+| `loadready`        | Binding and clip identity plus current state after native `loadeddata`.                                         |
+| `seekrequest`      | Binding and clip identity, requested timeline time, bounded target time, and current state.                     |
+| `frame`            | Binding and clip identity, presented media time, optional display time and dimensions, and current state.       |
+| `error`            | A `FrameByFrameError` produced by target setup, media, source, or runtime mapping.                              |
+| `destroy`          | The final destroyed state snapshot.                                                                             |
 
 Listener failures do not stop other listeners or corrupt controller state. They are rethrown in a microtask so application bugs remain visible.
 
@@ -185,6 +237,7 @@ The controller adds these stable `FrameByFrameError` codes:
 | Code                          | Meaning                                                                               |
 | ----------------------------- | ------------------------------------------------------------------------------------- |
 | `INVALID_CONTROLLER`          | The controller, axes, bindings, or listener shape is invalid.                         |
+| `INVALID_BREAKPOINT_CONFIG`   | A breakpoint shape, reference, query, or resolved cascade is invalid.                 |
 | `DUPLICATE_BINDING_ID`        | Two bindings in the same controller use one ID.                                       |
 | `ENVIRONMENT_UNAVAILABLE`     | Mount requires browser document or animation-frame capabilities that are unavailable. |
 | `SOURCE_NOT_FOUND`            | A source is invalid, missing, or its resolver failed.                                 |

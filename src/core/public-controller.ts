@@ -15,11 +15,11 @@ const reportAsyncError = (error: unknown): void => {
 
 const sourceRegistry = new SourceRegistry(reportAsyncError);
 const videoTargetRegistry = new VideoTargetRegistry();
-const createVideoRenderer: VideoRendererFactory = (config, onEvent) => {
+const createVideoRenderer: VideoRendererFactory = (config, onEvent, activity) => {
   const handle = resolveVideoTarget(config, videoTargetRegistry);
 
   try {
-    return createNativeVideoRenderer(config, handle, onEvent);
+    return createNativeVideoRenderer(config, handle, onEvent, undefined, activity);
   } catch (error) {
     handle.release();
     throw error;

@@ -641,4 +641,108 @@ describe('native video renderer', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     renderer.destroy();
   });
+
+  it('prepares responsive media changes transactionally and keeps target ownership stable', () => {
+    const target = new FakeVideoElement();
+    const viewportCallbacks: (() => void)[] = [];
+    const observerStops: ReturnType<typeof vi.fn>[] = [];
+    const observeNearViewport = vi.fn((_target, _rootMargin: string, onEnter: () => void) => {
+      viewportCallbacks.push(onEnter);
+      const stop = vi.fn();
+      observerStops.push(stop);
+      return stop;
+    });
+    const { dependencies } = createFullPreloadDependencies(vi.fn(), observeNearViewport);
+    const base = compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }] }], {
+      loading: { mode: 'on-demand', trigger: 'manual' },
+    });
+    const responsive = compileBinding(
+      target,
+      [{ id: 'detail', sources: [{ src: '/detail.mp4' }] }],
+      {
+        loading: {
+          mode: 'on-demand',
+          trigger: 'target-near-viewport',
+          rootMargin: '300px',
+        },
+      },
+    );
+    const renderer = createNativeVideoRenderer(
+      base,
+      createHandle(target).handle,
+      vi.fn(),
+      dependencies,
+    );
+
+    const cancelled = renderer.prepareConfig(responsive);
+    cancelled.cancel();
+    cancelled.cancel();
+    expect(observerStops[0]).toHaveBeenCalledOnce();
+    renderer.setResolution(resolveAt('intro', 1));
+    expect(target.getAttribute('src')).toBeNull();
+
+    const committed = renderer.prepareConfig(responsive);
+    viewportCallbacks[1]?.();
+    committed.commit();
+    committed.commit();
+    committed.cancel();
+    expect(target.getAttribute('src')).toBeNull();
+    renderer.setResolution(resolveAt('detail', 2));
+
+    expect(observeNearViewport).toHaveBeenLastCalledWith(target, '300px', expect.any(Function));
+    expect(observerStops[1]).toHaveBeenCalledOnce();
+    expect(target.getAttribute('src')).toBe('/detail.mp4');
+
+    renderer.setActivity('disabled');
+    renderer.setActivity('active');
+    viewportCallbacks[2]?.();
+    expect(observerStops[2]).toHaveBeenCalledOnce();
+
+    const otherTarget = new FakeVideoElement();
+    expect(() =>
+      renderer.prepareConfig(
+        compileBinding(otherTarget, [{ id: 'detail', sources: [{ src: '/detail.mp4' }] }]),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_BREAKPOINT_CONFIG' }));
+    renderer.destroy();
+  });
+
+  it('suspends frame work, disables media, and resumes the latest desired resolution', async () => {
+    const target = new FakeVideoElement();
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }] }]),
+      createHandle(target).handle,
+      vi.fn(),
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    renderer.setActivity('suspended');
+    renderer.setResolution(resolveAt('intro', 3));
+    const loadCallsBeforeResume = target.loadCalls;
+    target.duration = 10;
+    target.emit('loadedmetadata');
+    expect(target.seekAssignments).toEqual([]);
+
+    renderer.setActivity('active');
+    renderer.setActivity('active');
+    expect(target.loadCalls).toBe(loadCallsBeforeResume);
+    expect(target.seekAssignments).toEqual([3]);
+
+    renderer.setActivity('disabled');
+    expect(renderer.getState().loadState).toBe('unloaded');
+    renderer.setResolution(resolveAt('intro', 5));
+    await expect(renderer.load()).resolves.toBeUndefined();
+    await expect(renderer.whenReady()).resolves.toBeUndefined();
+    expect(target.getAttribute('src')).toBeNull();
+
+    renderer.setActivity('active');
+    renderer.setResolution(resolveAt('intro', 5));
+    expect(target.getAttribute('src')).toBe('/intro.mp4');
+
+    renderer.unload();
+    renderer.setActivity('suspended');
+    renderer.setActivity('active');
+    expect(target.getAttribute('src')).toBeNull();
+    renderer.destroy();
+  });
 });

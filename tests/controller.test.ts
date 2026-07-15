@@ -8,6 +8,13 @@ import { createFrameByFrame } from '../src/index.js';
 import { createFakeScrollEnvironment } from './helpers/fake-scroll-source.js';
 
 import type { ControllerDependencies } from '../src/core/controller.js';
+import type { ControllerBindingConfig } from '../src/core/controller-config.js';
+import type {
+  ControllerEnvironmentObserver,
+  ControllerEnvironmentObserverFactory,
+  ControllerEnvironmentObserverOptions,
+  ControllerEnvironmentSnapshot,
+} from '../src/responsive/environment-observer.js';
 import type {
   VideoRenderer,
   VideoRendererEvent,
@@ -77,6 +84,9 @@ class TestVideoRenderer implements VideoRenderer {
   destroyCalls = 0;
   whenReadyCalls = 0;
   readiness: Promise<void> = Promise.resolve();
+  config: ControllerBindingConfig;
+  readonly activities: Parameters<VideoRenderer['setActivity']>[0][] = [];
+  configCommits = 0;
   state: VideoRendererState = {
     loadState: 'idle',
     loadProgress: Object.freeze({}),
@@ -89,7 +99,26 @@ class TestVideoRenderer implements VideoRenderer {
     error: null,
   };
 
-  constructor(target: HTMLVideoElement, onEvent: (event: VideoRendererEvent) => void) {
+  prepareConfig(config: ControllerBindingConfig): ReturnType<VideoRenderer['prepareConfig']> {
+    return {
+      commit: () => {
+        this.config = config;
+        this.configCommits += 1;
+      },
+      cancel: () => undefined,
+    };
+  }
+
+  setActivity(activity: Parameters<VideoRenderer['setActivity']>[0]): void {
+    this.activities.push(activity);
+  }
+
+  constructor(
+    config: ControllerBindingConfig,
+    target: HTMLVideoElement,
+    onEvent: (event: VideoRendererEvent) => void,
+  ) {
+    this.config = config;
     this.target = target;
     this.onEvent = onEvent;
   }
@@ -126,6 +155,73 @@ class TestVideoRenderer implements VideoRenderer {
     this.state = { ...this.state, loadState: 'unloaded' };
   }
 }
+
+class TestEnvironmentObserver implements ControllerEnvironmentObserver {
+  readonly options: ControllerEnvironmentObserverOptions;
+  snapshot: ControllerEnvironmentSnapshot;
+  readonly observedTargets: Element[][] = [];
+  destroyCalls = 0;
+
+  constructor(
+    options: ControllerEnvironmentObserverOptions,
+    snapshot: ControllerEnvironmentSnapshot,
+  ) {
+    this.options = options;
+    this.snapshot = snapshot;
+  }
+
+  getSnapshot(): ControllerEnvironmentSnapshot {
+    return this.snapshot;
+  }
+
+  observeTargets(targets: readonly Element[]): void {
+    this.observedTargets.push([...targets]);
+  }
+
+  emitMedia(activeBreakpoints: readonly string[], prefersReducedMotion: boolean): void {
+    this.snapshot = Object.freeze({
+      ...this.snapshot,
+      activeBreakpoints: Object.freeze([...activeBreakpoints]),
+      prefersReducedMotion,
+    });
+    this.options.onMediaChange(this.snapshot);
+  }
+
+  emitResize(): void {
+    this.options.onResize();
+  }
+
+  emitVisibility(hidden: boolean): void {
+    this.snapshot = Object.freeze({ ...this.snapshot, hidden });
+    this.options.onVisibilityChange(hidden);
+  }
+
+  destroy(): void {
+    this.destroyCalls += 1;
+  }
+}
+
+const createTestEnvironmentFactory = (
+  initial: Partial<ControllerEnvironmentSnapshot> = {},
+): {
+  readonly factory: ControllerEnvironmentObserverFactory;
+  readonly observers: TestEnvironmentObserver[];
+} => {
+  const observers: TestEnvironmentObserver[] = [];
+  const factory: ControllerEnvironmentObserverFactory = (options) => {
+    const observer = new TestEnvironmentObserver(
+      options,
+      Object.freeze({
+        activeBreakpoints: Object.freeze([...(initial.activeBreakpoints ?? [])]),
+        prefersReducedMotion: initial.prefersReducedMotion ?? false,
+        hidden: initial.hidden ?? false,
+      }),
+    );
+    observers.push(observer);
+    return observer;
+  };
+  return { factory, observers };
+};
 
 const createOptions = (source: HTMLElement): FrameByFrameOptions => ({
   source,
@@ -188,7 +284,7 @@ const createDependencies = (
       sourceRegistry: new SourceRegistry(reportAsyncError),
       reportAsyncError,
       createVideoRenderer: (config, onEvent) => {
-        const renderer = new TestVideoRenderer(config.target as HTMLVideoElement, onEvent);
+        const renderer = new TestVideoRenderer(config, config.target as HTMLVideoElement, onEvent);
         renderers.push(renderer);
         return renderer;
       },
@@ -460,7 +556,11 @@ describe('createFrameByFrame controller', () => {
             throw new FrameByFrameError('TARGET_NOT_FOUND', 'missing target');
           }
 
-          const renderer = new TestVideoRenderer(config.target as HTMLVideoElement, onEvent);
+          const renderer = new TestVideoRenderer(
+            config,
+            config.target as HTMLVideoElement,
+            onEvent,
+          );
           created.push(renderer);
           return renderer;
         },
@@ -605,6 +705,308 @@ describe('createFrameByFrame controller', () => {
     expect(Object.isFrozen(first.bindings)).toBe(true);
     expect(Object.isFrozen(first.bindings['pixels']?.resolution)).toBe(true);
     expect(first.activeBreakpoints).toEqual([]);
+    expect(first.prefersReducedMotion).toBe(false);
+  });
+
+  it('applies matching breakpoints in declaration order and reuses mounted renderers', async () => {
+    const { dependencies, environment, renderers } = createDependencies();
+    const environmentFactory = createTestEnvironmentFactory({
+      activeBreakpoints: ['tablet', 'compact'],
+    });
+    environment.element.scrollHeight = 200;
+    environment.element.clientHeight = 100;
+    environment.element.scrollTop = 50;
+    const target = createTargetReference();
+    const controller = createController(
+      {
+        source: environment.element as unknown as HTMLElement,
+        axes: {
+          y: {
+            bindings: [
+              {
+                id: 'story',
+                target,
+                clips: [createClip('story')],
+                video: { muted: true },
+                frame: { snap: true, fps: 30 },
+                loading: {
+                  mode: 'on-demand',
+                  trigger: 'target-near-viewport',
+                  rootMargin: '200px',
+                },
+                segments: [{ clip: 'story', media: [0, 10], scroll: [0, 100] }],
+              },
+            ],
+          },
+        },
+        breakpoints: [
+          {
+            id: 'tablet',
+            query: '(max-width: 900px)',
+            override: {
+              axes: {
+                y: {
+                  bindings: [
+                    {
+                      id: 'story',
+                      video: { muted: false },
+                      frame: { snap: false },
+                      loading: { mode: 'immediate' },
+                      segments: [{ clip: 'story', media: [10, 20], scroll: [0, 100] }],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          {
+            id: 'compact',
+            query: '(max-width: 600px)',
+            override: {
+              axes: {
+                y: {
+                  bindings: [
+                    {
+                      id: 'story',
+                      video: { controls: true },
+                      segments: [{ clip: 'story', media: [20, 30], scroll: [0, 100] }],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+      { ...dependencies, createEnvironmentObserver: environmentFactory.factory },
+    );
+    const changes = vi.fn();
+    controller.on('breakpointchange', changes);
+    await controller.mount();
+
+    expect(controller.getState()).toMatchObject({
+      activeBreakpoints: ['tablet', 'compact'],
+      bindings: { story: { resolution: { targetTime: 25 } } },
+    });
+    expect(renderers).toHaveLength(1);
+    expect(renderers[0]?.config.video).toMatchObject({ muted: false, controls: true });
+    expect(renderers[0]?.config.loading).toMatchObject({ mode: 'immediate', trigger: null });
+    expect(environmentFactory.observers[0]?.observedTargets[0]).toEqual([target]);
+
+    environmentFactory.observers[0]?.emitMedia(['tablet'], false);
+    expect(controller.getState()).toMatchObject({
+      activeBreakpoints: ['tablet'],
+      bindings: { story: { resolution: { targetTime: 15 } } },
+    });
+    expect(renderers).toHaveLength(1);
+    expect(renderers[0]?.configCommits).toBe(1);
+    expect(changes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previous: ['tablet', 'compact'],
+        current: ['tablet'],
+      }),
+    );
+
+    environmentFactory.observers[0]?.emitMedia(['compact'], false);
+    expect(controller.getState().activeBreakpoints).toEqual(['compact']);
+    expect(renderers[0]?.config.loading).toMatchObject({
+      mode: 'on-demand',
+      trigger: 'target-near-viewport',
+      rootMargin: '200px',
+    });
+  });
+
+  it('disables and re-enables existing axes through the ordered cascade', async () => {
+    const { dependencies, environment } = createDependencies();
+    const environmentFactory = createTestEnvironmentFactory({
+      activeBreakpoints: ['disable-y', 'enable-y'],
+    });
+    environment.element.scrollHeight = 200;
+    environment.element.clientHeight = 100;
+    environment.element.scrollTop = 50;
+    const controller = createController(
+      {
+        source: environment.element as unknown as HTMLElement,
+        axes: {
+          y: {
+            bindings: [
+              {
+                id: 'story',
+                target: createTargetReference(),
+                clips: [createClip('story')],
+                segments: [{ media: [0, 10], scroll: [0, 100] }],
+              },
+            ],
+          },
+        },
+        breakpoints: [
+          {
+            id: 'disable-y',
+            query: '(orientation: portrait)',
+            override: { axes: { y: false } },
+          },
+          {
+            id: 'enable-y',
+            query: '(min-height: 500px)',
+            override: { axes: { y: { enabled: true } } },
+          },
+        ],
+      },
+      { ...dependencies, createEnvironmentObserver: environmentFactory.factory },
+    );
+    await controller.mount();
+
+    expect(controller.getState()).toMatchObject({
+      axes: { y: { enabled: true } },
+      bindings: { story: { resolution: { targetTime: 5 } } },
+    });
+    expect(environment.element.listeners).toHaveLength(1);
+
+    environmentFactory.observers[0]?.emitMedia(['disable-y'], false);
+    expect(controller.getState()).toMatchObject({
+      axes: { y: { enabled: false } },
+      bindings: { story: { resolution: null } },
+    });
+    expect(environment.element.listeners).toHaveLength(0);
+  });
+
+  it('rejects an invalid runtime cascade without partially changing active state', async () => {
+    const { dependencies, environment, renderers } = createDependencies();
+    const environmentFactory = createTestEnvironmentFactory();
+    environment.element.scrollHeight = 200;
+    environment.element.clientHeight = 100;
+    environment.element.scrollTop = 50;
+    const controller = createController(
+      {
+        source: environment.element as unknown as HTMLElement,
+        axes: {
+          y: {
+            bindings: [
+              {
+                id: 'story',
+                target: createTargetReference(),
+                clips: [createClip('intro')],
+                segments: [{ clip: 'intro', media: [0, 10], scroll: [0, 100] }],
+              },
+            ],
+          },
+        },
+        breakpoints: [
+          {
+            id: 'invalid-clips',
+            query: '(max-width: 500px)',
+            override: {
+              axes: {
+                y: {
+                  bindings: [{ id: 'story', clips: [createClip('detail')] }],
+                },
+              },
+            },
+          },
+        ],
+      },
+      { ...dependencies, createEnvironmentObserver: environmentFactory.factory },
+    );
+    const errors = vi.fn();
+    const changes = vi.fn();
+    controller.on('error', errors);
+    controller.on('breakpointchange', changes);
+    await controller.mount();
+
+    environmentFactory.observers[0]?.emitMedia(['invalid-clips'], false);
+
+    expect(controller.getState()).toMatchObject({
+      status: 'ready',
+      activeBreakpoints: [],
+      lastError: { code: 'INVALID_BREAKPOINT_CONFIG' },
+      bindings: { story: { resolution: { clipId: 'intro', targetTime: 5 } } },
+    });
+    expect(renderers[0]?.configCommits).toBe(0);
+    expect(errors).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'INVALID_BREAKPOINT_CONFIG' }),
+    );
+    expect(changes).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['first-frame', 0, 'active'],
+    ['last-frame', 10, 'active'],
+    ['ignore', 5, 'active'],
+    ['disable', null, 'disabled'],
+  ] as const)(
+    'applies the %s reduced-motion behavior and follows preference changes',
+    async (reducedMotion, targetTime, activity) => {
+      const { dependencies, environment, renderers } = createDependencies();
+      const environmentFactory = createTestEnvironmentFactory({ prefersReducedMotion: true });
+      environment.element.scrollHeight = 200;
+      environment.element.clientHeight = 100;
+      environment.element.scrollTop = 50;
+      const controller = createController(
+        {
+          source: environment.element as unknown as HTMLElement,
+          reducedMotion,
+          axes: {
+            y: {
+              bindings: [
+                {
+                  id: 'story',
+                  target: createTargetReference(),
+                  clips: [createClip('story')],
+                  segments: [{ media: [0, 10], scroll: [0, 100] }],
+                },
+              ],
+            },
+          },
+        },
+        { ...dependencies, createEnvironmentObserver: environmentFactory.factory },
+      );
+      const reasons: string[] = [];
+      controller.on('update', ({ reason }) => reasons.push(reason));
+      await controller.mount();
+
+      expect(controller.getState().prefersReducedMotion).toBe(true);
+      expect(controller.getState().bindings['story']?.resolution?.targetTime ?? null).toBe(
+        targetTime,
+      );
+      expect(renderers[0]?.activities.at(-1)).toBe(activity);
+
+      environmentFactory.observers[0]?.emitMedia([], false);
+      expect(controller.getState().bindings['story']?.resolution?.targetTime).toBe(5);
+      expect(renderers[0]?.activities.at(-1)).toBe('active');
+      expect(reasons.at(-1)).toBe('preference');
+    },
+  );
+
+  it('suspends hidden controllers and refreshes metrics after visibility and resize changes', async () => {
+    const { dependencies, environment, renderers } = createDependencies();
+    const environmentFactory = createTestEnvironmentFactory();
+    environment.element.scrollHeight = 200;
+    environment.element.clientHeight = 100;
+    const controller = createController(
+      createOptions(environment.element as unknown as HTMLElement),
+      { ...dependencies, createEnvironmentObserver: environmentFactory.factory },
+    );
+    const reasons: string[] = [];
+    controller.on('update', ({ reason }) => reasons.push(reason));
+    await controller.mount();
+    expect(environment.element.listeners).toHaveLength(1);
+
+    environmentFactory.observers[0]?.emitVisibility(true);
+    expect(environment.element.listeners).toHaveLength(0);
+    expect(renderers.every((renderer) => renderer.activities.at(-1) === 'suspended')).toBe(true);
+
+    environment.element.scrollHeight = 300;
+    environmentFactory.observers[0]?.emitVisibility(false);
+    expect(controller.getState().axes.y?.max).toBe(200);
+    expect(environment.element.listeners).toHaveLength(1);
+
+    environment.element.scrollHeight = 400;
+    environmentFactory.observers[0]?.emitResize();
+    expect(controller.getState().axes.y?.max).toBe(300);
+    expect(reasons.slice(-3)).toEqual(['visibility', 'visibility', 'resize']);
+
+    controller.destroy();
+    expect(environmentFactory.observers[0]?.destroyCalls).toBe(1);
   });
 
   it('isolates public listener errors and validates listeners', async () => {
@@ -758,6 +1160,57 @@ describe('controller configuration', () => {
     expect(() => createFrameByFrame({ axes: { x: false, y: false } })).toThrow(
       expect.objectContaining({ code: 'INVALID_CONTROLLER' }),
     );
+  });
+
+  it('validates breakpoint identity, references, overrides, and reduced-motion behavior', () => {
+    const createOptionsWithBreakpoint = (breakpoint: unknown) => ({
+      axes: { y: { bindings: [validBinding] } },
+      breakpoints: [breakpoint],
+    });
+
+    for (const breakpoint of [
+      null,
+      { id: '', query: '(width > 1px)', override: { axes: { y: false } } },
+      { id: 'compact', query: '', override: { axes: { y: false } } },
+      {
+        id: 'compact',
+        query: '(width > 1px)',
+        source: '#other',
+        override: { axes: { y: false } },
+      },
+      { id: 'compact', query: '(width > 1px)', override: { axes: { x: false } } },
+      {
+        id: 'compact',
+        query: '(width > 1px)',
+        override: { axes: { y: { bindings: [{ id: 'missing' }] } } },
+      },
+      {
+        id: 'compact',
+        query: '(width > 1px)',
+        override: { axes: { y: { bindings: [{ id: 'binding', target: '#other' }] } } },
+      },
+    ]) {
+      expect(() => createFrameByFrame(createOptionsWithBreakpoint(breakpoint) as never)).toThrow(
+        expect.objectContaining({ code: 'INVALID_BREAKPOINT_CONFIG' }),
+      );
+    }
+
+    expect(() =>
+      createFrameByFrame({
+        axes: { y: { bindings: [validBinding] } },
+        breakpoints: [
+          { id: 'same', query: '(width > 1px)', override: { axes: { y: false } } },
+          { id: 'same', query: '(width > 2px)', override: { axes: { y: false } } },
+        ],
+      }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_BREAKPOINT_CONFIG' }));
+
+    expect(() =>
+      createFrameByFrame({
+        axes: { y: { bindings: [validBinding] } },
+        reducedMotion: 'animate' as never,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'INVALID_CONTROLLER' }));
   });
 
   it.each([

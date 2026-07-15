@@ -1,14 +1,31 @@
 export { FrameByFrameError } from './core/errors.js';
+export { createFrameByFrame } from './core/public-controller.js';
 export { createTimeline } from './mapping/timeline.js';
 
 export type {
+  AxisName,
   Easing,
   EasingFunction,
   EasingName,
+  FrameByFrameAxesConfig,
+  FrameByFrameAxisConfig,
+  FrameByFrameAxisState,
+  FrameByFrameBindingConfig,
+  FrameByFrameBindingState,
+  FrameByFrameController,
   FrameByFrameErrorCode,
   FrameByFrameErrorDetails,
+  FrameByFrameErrorInfo,
   FrameByFrameErrorOptions,
+  FrameByFrameEventMap,
+  FrameByFrameOptions,
+  FrameByFrameState,
+  FrameByFrameStatus,
+  FrameByFrameUpdateEvent,
+  FrameByFrameUpdateReason,
   FrameConfig,
+  ScrollSource,
+  ScrollSourceReference,
   ScrollUnit,
   Timeline,
   TimelineOptions,

@@ -77,13 +77,124 @@ export interface Timeline {
   resolve(position: number): TimelineResolution;
 }
 
-/** Stable error codes currently emitted by the pure timeline engine. */
+/** An independently observed scroll axis. */
+export type AxisName = 'x' | 'y';
+
+/** A DOM scroll source resolved only when a controller mounts. */
+export type ScrollSource = Document | HTMLElement;
+
+/** A direct, selected, or lazily resolved scroll source. */
+export type ScrollSourceReference = ScrollSource | string | (() => ScrollSource | null);
+
+/** One named timeline controlled by a scroll axis. */
+export interface FrameByFrameBindingConfig extends TimelineOptions {
+  /** Unique binding ID within one controller. */
+  readonly id: string;
+}
+
+/** Configuration for one independent scroll axis. */
+export interface FrameByFrameAxisConfig {
+  /** Whether this axis participates in updates; defaults to true. */
+  readonly enabled?: boolean;
+  /** Non-empty timeline bindings driven by this axis. */
+  readonly bindings: readonly FrameByFrameBindingConfig[];
+}
+
+/** Horizontal and vertical controller configuration. */
+export interface FrameByFrameAxesConfig {
+  readonly x?: false | FrameByFrameAxisConfig;
+  readonly y?: false | FrameByFrameAxisConfig;
+}
+
+/** Configuration captured by `createFrameByFrame`. */
+export interface FrameByFrameOptions {
+  /** Scroll source resolved during mount; omission selects the document. */
+  readonly source?: ScrollSourceReference;
+  /** At least one configured axis with one binding is required. */
+  readonly axes: FrameByFrameAxesConfig;
+}
+
+/** Controller lifecycle states. */
+export type FrameByFrameStatus = 'idle' | 'mounting' | 'ready' | 'disabled' | 'error' | 'destroyed';
+
+/** Read-only public shape of package errors stored in state and events. */
+export interface FrameByFrameErrorInfo extends Error {
+  readonly name: 'FrameByFrameError';
+  readonly code: FrameByFrameErrorCode;
+  readonly cause: unknown;
+  readonly details: FrameByFrameErrorDetails | undefined;
+}
+
+/** Last observed metrics for one axis. */
+export interface FrameByFrameAxisState {
+  readonly enabled: boolean;
+  readonly offset: number;
+  readonly max: number;
+  readonly progress: number;
+}
+
+/** Last timeline resolution for one binding. */
+export interface FrameByFrameBindingState {
+  readonly id: string;
+  readonly axis: AxisName;
+  readonly resolution: TimelineResolution | null;
+}
+
+/** Detached controller state for debugging and framework integration. */
+export interface FrameByFrameState {
+  readonly status: FrameByFrameStatus;
+  readonly enabled: boolean;
+  readonly source: ScrollSource | null;
+  readonly activeBreakpoints: readonly string[];
+  readonly axes: Readonly<Partial<Record<AxisName, FrameByFrameAxisState>>>;
+  readonly bindings: Readonly<Record<string, FrameByFrameBindingState>>;
+  readonly lastError: FrameByFrameErrorInfo | null;
+}
+
+/** Why the controller published an update snapshot. */
+export type FrameByFrameUpdateReason = 'mount' | 'scroll' | 'refresh' | 'enable' | 'disable';
+
+/** Payload emitted after one coalesced controller update. */
+export interface FrameByFrameUpdateEvent {
+  readonly reason: FrameByFrameUpdateReason;
+  readonly state: FrameByFrameState;
+}
+
+/** Public event payloads available in the controller foundation. */
+export interface FrameByFrameEventMap {
+  readonly mount: FrameByFrameState;
+  readonly update: FrameByFrameUpdateEvent;
+  readonly error: FrameByFrameErrorInfo;
+  readonly destroy: FrameByFrameState;
+}
+
+/** Framework-independent controller lifecycle and state API. */
+export interface FrameByFrameController {
+  mount(): Promise<void>;
+  refresh(): void;
+  enable(): void;
+  disable(): void;
+  getState(): FrameByFrameState;
+  on<EventName extends keyof FrameByFrameEventMap>(
+    event: EventName,
+    listener: (payload: FrameByFrameEventMap[EventName]) => void,
+  ): () => void;
+  destroy(): void;
+}
+
+/** Stable error codes currently emitted by the public package APIs. */
 export type FrameByFrameErrorCode =
   | 'INVALID_TIMELINE'
   | 'INVALID_SEGMENT'
   | 'OVERLAPPING_SEGMENTS'
   | 'INVALID_FRAME_RATE'
-  | 'INVALID_EASING_RESULT';
+  | 'INVALID_EASING_RESULT'
+  | 'INVALID_CONTROLLER'
+  | 'DUPLICATE_BINDING_ID'
+  | 'ENVIRONMENT_UNAVAILABLE'
+  | 'SOURCE_NOT_FOUND'
+  | 'INVALID_LIFECYCLE_OPERATION'
+  | 'CONTROLLER_DESTROYED';
 
 /** Structured context attached to a `FrameByFrameError`. */
 export type FrameByFrameErrorDetails = Readonly<Record<string, unknown>>;

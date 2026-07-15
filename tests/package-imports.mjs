@@ -8,7 +8,17 @@ const [core, video, canvas, types] = await Promise.all([
 ]);
 
 assert.equal(typeof core.createTimeline, 'function');
+assert.equal(typeof core.createFrameByFrame, 'function');
 assert.equal(typeof core.FrameByFrameError, 'function');
+
+const controller = core.createFrameByFrame({
+  axes: {
+    y: {
+      bindings: [{ id: 'intro', segments: [{ media: [0, 1], scroll: [0, 1] }] }],
+    },
+  },
+});
+assert.equal(controller.getState().status, 'idle');
 
 const timeline = core.createTimeline({
   segments: [

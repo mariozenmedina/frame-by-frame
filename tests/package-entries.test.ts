@@ -6,12 +6,15 @@ import * as types from '../src/types.js';
 import * as video from '../src/video.js';
 
 describe('package entry points', () => {
+  it('exposes the pure timeline API from the core entry point', () => {
+    expect(Object.keys(core).sort()).toEqual(['FrameByFrameError', 'createTimeline']);
+  });
+
   it.each([
-    ['core', core],
     ['video', video],
     ['canvas', canvas],
     ['types', types],
-  ])('imports the empty %s entry point without side effects', (_name, entryPoint) => {
+  ])('keeps the reserved %s entry point free of runtime exports', (_name, entryPoint) => {
     expect(Object.keys(entryPoint)).toEqual([]);
   });
 });

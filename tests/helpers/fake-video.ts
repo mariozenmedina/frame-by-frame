@@ -21,6 +21,8 @@ export class FakeVideoElement {
   poster = '';
   crossOrigin: string | null = null;
   duration = Number.NaN;
+  videoWidth = 1920;
+  videoHeight = 1080;
   error: { readonly code: number } | null = null;
   loadCalls = 0;
   pauseCalls = 0;
@@ -127,10 +129,60 @@ export class FakeVideoElement {
   }
 }
 
+export class FakeCanvasContext {
+  imageSmoothingEnabled = true;
+  readonly clearCalls: number[][] = [];
+  readonly drawCalls: unknown[][] = [];
+  drawError: Error | null = null;
+
+  clearRect(...values: number[]): void {
+    this.clearCalls.push(values);
+  }
+
+  drawImage(...values: unknown[]): void {
+    if (this.drawError !== null) {
+      throw this.drawError;
+    }
+
+    this.drawCalls.push(values);
+  }
+
+  asContext(): CanvasRenderingContext2D {
+    return this as unknown as CanvasRenderingContext2D;
+  }
+}
+
+export class FakeCanvasElement {
+  readonly nodeType = 1;
+  readonly localName = 'canvas';
+  readonly ownerDocument: FakeMediaDocument;
+  readonly context = new FakeCanvasContext();
+  parentNode: { removeChild(child: unknown): unknown } | null = null;
+  clientWidth = 300;
+  clientHeight = 150;
+  width = 300;
+  height = 150;
+  contextAvailable = true;
+
+  constructor(document: FakeMediaDocument) {
+    this.ownerDocument = document;
+  }
+
+  getContext(contextId: string): RenderingContext | null {
+    return contextId === '2d' && this.contextAvailable ? this.context.asContext() : null;
+  }
+
+  asCanvas(): HTMLCanvasElement {
+    return this as unknown as HTMLCanvasElement;
+  }
+}
+
 export class FakeMediaDocument {
   readonly nodeType = 9;
   readonly selections = new Map<string, unknown>();
   readonly created: FakeVideoElement[] = [];
+  readonly createdCanvases: FakeCanvasElement[] = [];
+  readonly defaultView = { devicePixelRatio: 2 };
   selectorError: Error | null = null;
 
   querySelector(selector: string): Element | null {
@@ -142,6 +194,12 @@ export class FakeMediaDocument {
   }
 
   createElement(name: string): HTMLElement {
+    if (name === 'canvas') {
+      const target = new FakeCanvasElement(this);
+      this.createdCanvases.push(target);
+      return target as unknown as HTMLElement;
+    }
+
     if (name !== 'video') {
       throw new Error(`Unexpected element: ${name}`);
     }
@@ -154,7 +212,7 @@ export class FakeMediaDocument {
 
 export class FakeMediaContainer {
   readonly nodeType = 1;
-  readonly children: FakeVideoElement[] = [];
+  readonly children: (FakeVideoElement | FakeCanvasElement)[] = [];
   readonly ownerDocument: FakeMediaDocument;
 
   constructor(document: FakeMediaDocument) {
@@ -162,9 +220,9 @@ export class FakeMediaContainer {
   }
 
   appendChild(child: Node): Node {
-    const video = child as unknown as FakeVideoElement;
-    this.children.push(video);
-    video.parentNode = this;
+    const element = child as unknown as FakeVideoElement | FakeCanvasElement;
+    this.children.push(element);
+    element.parentNode = this;
     return child;
   }
 
@@ -173,7 +231,7 @@ export class FakeMediaContainer {
 
     if (index >= 0) {
       this.children.splice(index, 1);
-      (child as FakeVideoElement).parentNode = null;
+      (child as FakeVideoElement | FakeCanvasElement).parentNode = null;
     }
 
     return child;

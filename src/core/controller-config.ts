@@ -3,10 +3,13 @@ import { FrameByFrameError } from './errors.js';
 
 import type {
   AxisName,
+  CanvasFit,
+  CanvasFrameByFrameOptions,
   FrameByFrameAxisConfig,
   FrameByFrameOptions,
   MediaCrossOrigin,
   ReducedMotionBehavior,
+  RendererType,
   Timeline,
   TimelineOptions,
   VideoPreload,
@@ -33,6 +36,13 @@ export interface ControllerVideoOptions {
   readonly loop: boolean | undefined;
 }
 
+export interface ControllerCanvasOptions {
+  readonly fit: CanvasFit;
+  readonly pixelRatio: number | 'device';
+  readonly imageSmoothingEnabled: boolean;
+  readonly decoderTarget: unknown;
+}
+
 export interface ControllerLoadingConfig {
   readonly mode: 'immediate' | 'on-demand';
   readonly trigger: VideoLoadingTrigger | null;
@@ -44,6 +54,7 @@ export interface ControllerLoadingConfig {
 export interface ControllerBindingConfig {
   readonly id: string;
   readonly axis: AxisName;
+  readonly renderer: RendererType;
   readonly timeline: Timeline;
   readonly startPosition: number;
   readonly endPosition: number;
@@ -52,7 +63,9 @@ export interface ControllerBindingConfig {
   readonly clips: readonly ControllerVideoClipConfig[];
   readonly loading: ControllerLoadingConfig;
   readonly video: ControllerVideoOptions;
+  readonly canvas: ControllerCanvasOptions | null;
   readonly timeEpsilon: number;
+  readonly decoderSignature: string;
   readonly mediaSignature: string;
   readonly definition: Readonly<Record<string, unknown>>;
 }
@@ -78,7 +91,10 @@ export interface ControllerProgram {
   readonly base: ControllerConfig;
   readonly breakpoints: readonly ControllerBreakpointConfig[];
   readonly reducedMotion: ReducedMotionBehavior;
+  readonly supportedRenderers: ReadonlySet<RendererType>;
 }
+
+type ControllerInputOptions = FrameByFrameOptions | CanvasFrameByFrameOptions;
 
 const AXES = ['x', 'y'] as const;
 const CROSS_ORIGIN_VALUES = ['', 'anonymous', 'use-credentials'] as const;
@@ -98,7 +114,7 @@ const REDUCED_MOTION_BEHAVIORS = ['first-frame', 'last-frame', 'disable', 'ignor
 const BREAKPOINT_KEYS = ['id', 'query', 'override'] as const;
 const BREAKPOINT_OVERRIDE_KEYS = ['axes'] as const;
 const AXIS_OVERRIDE_KEYS = ['enabled', 'bindings'] as const;
-const BINDING_OVERRIDE_KEYS = [
+const VIDEO_BINDING_OVERRIDE_KEYS = [
   'id',
   'segments',
   'clips',
@@ -108,6 +124,9 @@ const BINDING_OVERRIDE_KEYS = [
   'video',
   'seek',
 ] as const;
+const CANVAS_BINDING_OVERRIDE_KEYS = [...VIDEO_BINDING_OVERRIDE_KEYS, 'canvas'] as const;
+const CANVAS_FITS = ['contain', 'cover', 'fill', 'none'] as const;
+const CANVAS_OVERRIDE_KEYS = ['fit', 'pixelRatio', 'imageSmoothingEnabled'] as const;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null;
@@ -197,6 +216,7 @@ const createBindingDefinition = (
     ...(value['frame'] === undefined ? {} : { frame: cloneOption(value['frame']) }),
     ...(value['loading'] === undefined ? {} : { loading: cloneOption(value['loading']) }),
     ...(value['video'] === undefined ? {} : { video: cloneOption(value['video']) }),
+    ...(value['canvas'] === undefined ? {} : { canvas: cloneOption(value['canvas']) }),
     ...(value['seek'] === undefined ? {} : { seek: cloneOption(value['seek']) }),
   });
 
@@ -375,6 +395,70 @@ const compileVideoOptions = (value: unknown, bindingId: string): ControllerVideo
   });
 };
 
+const compileCanvasOptions = (
+  value: unknown,
+  bindingId: string,
+  renderer: RendererType,
+): ControllerCanvasOptions | null => {
+  if (renderer === 'video') {
+    if (value !== undefined) {
+      return invalidMediaConfig(bindingId, 'Canvas options require renderer "canvas".', {
+        canvas: value,
+      });
+    }
+
+    return null;
+  }
+
+  if (value !== undefined && !isRecord(value)) {
+    return invalidMediaConfig(bindingId, 'Canvas options must be an object.', { canvas: value });
+  }
+
+  const options = value ?? {};
+  const fit = options['fit'] ?? 'contain';
+  const pixelRatio = options['pixelRatio'] ?? 'device';
+  const imageSmoothingEnabled = options['imageSmoothingEnabled'] ?? true;
+  const decoderTarget = options['decoderTarget'];
+
+  if (!CANVAS_FITS.includes(fit as CanvasFit)) {
+    return invalidMediaConfig(bindingId, 'Canvas fit is invalid.', { fit });
+  }
+
+  if (
+    pixelRatio !== 'device' &&
+    (typeof pixelRatio !== 'number' || !Number.isFinite(pixelRatio) || pixelRatio <= 0)
+  ) {
+    return invalidMediaConfig(
+      bindingId,
+      'Canvas pixelRatio must be "device" or finite and positive.',
+      {
+        pixelRatio,
+      },
+    );
+  }
+
+  if (typeof imageSmoothingEnabled !== 'boolean') {
+    return invalidMediaConfig(bindingId, 'Canvas imageSmoothingEnabled must be a boolean.', {
+      imageSmoothingEnabled,
+    });
+  }
+
+  if (decoderTarget !== undefined && !isElementReference(decoderTarget)) {
+    return invalidMediaConfig(
+      bindingId,
+      'Canvas decoderTarget must be an element, selector, or resolver.',
+      { decoderTarget },
+    );
+  }
+
+  return Object.freeze({
+    fit: fit as CanvasFit,
+    pixelRatio,
+    imageSmoothingEnabled,
+    decoderTarget,
+  });
+};
+
 const compileLoading = (
   value: unknown,
   bindingId: string,
@@ -510,7 +594,11 @@ const validateSegmentClips = (
   }
 };
 
-const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig => {
+const compileBinding = (
+  value: unknown,
+  axis: AxisName,
+  supportedRenderers: ReadonlySet<RendererType>,
+): ControllerBindingConfig => {
   if (!isRecord(value)) {
     return invalidController('Each controller binding must be an object.', {
       axis,
@@ -527,10 +615,24 @@ const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig
     });
   }
 
-  if (value['renderer'] !== undefined && value['renderer'] !== 'video') {
-    return invalidMediaConfig(id, 'Only the native video renderer is currently supported.', {
+  const rendererValue = value['renderer'] ?? 'video';
+
+  if (rendererValue !== 'video' && rendererValue !== 'canvas') {
+    return invalidMediaConfig(id, 'The configured renderer is not supported.', {
       renderer: value['renderer'],
     });
+  }
+
+  const renderer: RendererType = rendererValue;
+
+  if (!supportedRenderers.has(renderer)) {
+    return invalidMediaConfig(
+      id,
+      renderer === 'canvas'
+        ? 'Canvas rendering requires the @frame-by-frame/core/canvas entry point.'
+        : 'The configured renderer is not supported.',
+      { renderer: value['renderer'] },
+    );
   }
 
   const hasTarget = value['target'] !== undefined;
@@ -548,7 +650,7 @@ const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig
   if (!isElementReference(reference)) {
     return invalidMediaConfig(
       id,
-      'Video target references must be elements, selectors, or resolvers.',
+      'Media target references must be elements, selectors, or resolvers.',
       {
         reference,
       },
@@ -569,15 +671,18 @@ const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig
   validateSegmentClips(value['segments'], clips, id);
   const loading = compileLoading(value['loading'], id, clips);
   const video = compileVideoOptions(value['video'], id);
+  const canvas = compileCanvasOptions(value['canvas'], id, renderer);
   const timeEpsilon = compileTimeEpsilon(value['seek'], id);
   const segments = value['segments'] as TimelineOptions['segments'];
   const startPosition = Math.min(...segments.map((segment) => segment.scroll[0]));
   const endPosition = Math.max(...segments.map((segment) => segment.scroll[1]));
   const definition = createBindingDefinition(value, axis);
+  const decoderSignature = JSON.stringify({ clips, loading, video, timeEpsilon });
 
   return Object.freeze({
     id,
     axis,
+    renderer,
     timeline,
     startPosition,
     endPosition,
@@ -586,14 +691,29 @@ const compileBinding = (value: unknown, axis: AxisName): ControllerBindingConfig
     clips,
     loading,
     video,
+    canvas,
     timeEpsilon,
-    mediaSignature: JSON.stringify({ clips, loading, video, timeEpsilon }),
+    decoderSignature,
+    mediaSignature: JSON.stringify({
+      decoderSignature,
+      canvas:
+        canvas === null
+          ? null
+          : {
+              fit: canvas.fit,
+              pixelRatio: canvas.pixelRatio,
+              imageSmoothingEnabled: canvas.imageSmoothingEnabled,
+            },
+    }),
     definition,
   });
 };
 
 /** Validates controller shape and compiles every timeline and media binding at factory time. */
-export const compileControllerConfig = (options: FrameByFrameOptions): ControllerConfig => {
+export const compileControllerConfig = (
+  options: ControllerInputOptions,
+  supportedRenderers: ReadonlySet<RendererType> = new Set<RendererType>(['video']),
+): ControllerConfig => {
   if (!isRecord(options)) {
     return invalidController('Controller options must be an object.', { options });
   }
@@ -616,7 +736,9 @@ export const compileControllerConfig = (options: FrameByFrameOptions): Controlle
     }
 
     const axis = readAxis(axisValue, axisName);
-    const axisBindings = axis.bindings.map((binding) => compileBinding(binding, axisName));
+    const axisBindings = axis.bindings.map((binding) =>
+      compileBinding(binding, axisName, supportedRenderers),
+    );
 
     for (const binding of axisBindings) {
       if (ids.has(binding.id)) {
@@ -675,6 +797,7 @@ const cloneBindingOverride = (
   breakpointId: string,
   axis: AxisName,
   bindingIds: ReadonlySet<string>,
+  canvasEnabled: boolean,
 ): Readonly<Record<string, unknown>> => {
   if (!isRecord(value)) {
     return invalidBreakpoint('Each breakpoint binding override must be an object.', {
@@ -684,7 +807,12 @@ const cloneBindingOverride = (
     });
   }
 
-  assertKnownKeys(value, BINDING_OVERRIDE_KEYS, breakpointId, `axes.${axis}.bindings`);
+  assertKnownKeys(
+    value,
+    canvasEnabled ? CANVAS_BINDING_OVERRIDE_KEYS : VIDEO_BINDING_OVERRIDE_KEYS,
+    breakpointId,
+    `axes.${axis}.bindings`,
+  );
   const id = value['id'];
 
   if (typeof id !== 'string' || !bindingIds.has(id)) {
@@ -705,7 +833,7 @@ const cloneBindingOverride = (
     }
   }
 
-  for (const field of ['frame', 'loading', 'video', 'seek'] as const) {
+  for (const field of ['frame', 'loading', 'video', 'seek', 'canvas'] as const) {
     if (hasOwn(value, field) && !isRecord(value[field])) {
       invalidBreakpoint(`Breakpoint binding override "${field}" must be an object.`, {
         axis,
@@ -716,6 +844,11 @@ const cloneBindingOverride = (
     }
   }
 
+  if (hasOwn(value, 'canvas')) {
+    const canvas = value['canvas'] as Readonly<Record<string, unknown>>;
+    assertKnownKeys(canvas, CANVAS_OVERRIDE_KEYS, breakpointId, `axes.${axis}.bindings.canvas`);
+  }
+
   return Object.freeze({
     id,
     ...(hasOwn(value, 'segments') ? { segments: cloneSegments(value['segments']) } : {}),
@@ -724,6 +857,7 @@ const cloneBindingOverride = (
     ...(hasOwn(value, 'frame') ? { frame: cloneOption(value['frame']) } : {}),
     ...(hasOwn(value, 'loading') ? { loading: cloneOption(value['loading']) } : {}),
     ...(hasOwn(value, 'video') ? { video: cloneOption(value['video']) } : {}),
+    ...(hasOwn(value, 'canvas') ? { canvas: cloneOption(value['canvas']) } : {}),
     ...(hasOwn(value, 'seek') ? { seek: cloneOption(value['seek']) } : {}),
   });
 };
@@ -732,6 +866,7 @@ const cloneBreakpointOverride = (
   value: unknown,
   breakpointId: string,
   base: ControllerConfig,
+  canvasEnabled: boolean,
 ): Readonly<Record<string, unknown>> => {
   if (!isRecord(value)) {
     return invalidBreakpoint(`Breakpoint "${breakpointId}" override must be an object.`, {
@@ -805,7 +940,13 @@ const cloneBreakpointOverride = (
     const seen = new Set<string>();
     const bindings = Array.isArray(bindingsValue)
       ? bindingsValue.map((binding) => {
-          const cloned = cloneBindingOverride(binding, breakpointId, axis, bindingIds);
+          const cloned = cloneBindingOverride(
+            binding,
+            breakpointId,
+            axis,
+            bindingIds,
+            canvasEnabled,
+          );
           const bindingId = cloned['id'] as string;
 
           if (seen.has(bindingId)) {
@@ -832,6 +973,7 @@ const cloneBreakpointOverride = (
 const compileBreakpoints = (
   value: unknown,
   base: ControllerConfig,
+  canvasEnabled: boolean,
 ): readonly ControllerBreakpointConfig[] => {
   if (value === undefined) {
     return Object.freeze([]);
@@ -878,7 +1020,7 @@ const compileBreakpoints = (
     return Object.freeze({
       id,
       query,
-      override: cloneBreakpointOverride(candidate['override'], id, base),
+      override: cloneBreakpointOverride(candidate['override'], id, base, canvasEnabled),
     });
   });
 
@@ -902,7 +1044,7 @@ const mergeBindingDefinition = (
     }
   }
 
-  for (const field of ['frame', 'loading', 'video', 'seek'] as const) {
+  for (const field of ['frame', 'loading', 'video', 'seek', 'canvas'] as const) {
     if (hasOwn(override, field)) {
       next[field] = mergeOption(current[field], override[field]);
     }
@@ -1015,12 +1157,13 @@ export const resolveControllerConfig = (
   }
 
   try {
-    return compileControllerConfig({
-      ...(program.base.source === undefined
-        ? {}
-        : { source: program.base.source as NonNullable<FrameByFrameOptions['source']> }),
-      axes: resolvedAxes,
-    });
+    return compileControllerConfig(
+      {
+        ...(program.base.source === undefined ? {} : { source: program.base.source }),
+        axes: resolvedAxes,
+      } as unknown as ControllerInputOptions,
+      program.supportedRenderers,
+    );
   } catch (cause) {
     return invalidBreakpoint(
       'The matching breakpoint cascade does not produce a valid controller configuration.',
@@ -1031,8 +1174,11 @@ export const resolveControllerConfig = (
 };
 
 /** Compiles the immutable base configuration and responsive program at factory time. */
-export const compileControllerProgram = (options: FrameByFrameOptions): ControllerProgram => {
-  const base = compileControllerConfig(options);
+export const compileControllerProgram = (
+  options: ControllerInputOptions,
+  supportedRenderers: ReadonlySet<RendererType> = new Set<RendererType>(['video']),
+): ControllerProgram => {
+  const base = compileControllerConfig(options, supportedRenderers);
   const reducedMotion = options.reducedMotion ?? 'first-frame';
 
   if (!REDUCED_MOTION_BEHAVIORS.includes(reducedMotion)) {
@@ -1041,7 +1187,8 @@ export const compileControllerProgram = (options: FrameByFrameOptions): Controll
 
   return Object.freeze({
     base,
-    breakpoints: compileBreakpoints(options.breakpoints, base),
+    breakpoints: compileBreakpoints(options.breakpoints, base, supportedRenderers.has('canvas')),
     reducedMotion,
+    supportedRenderers,
   });
 };

@@ -11,7 +11,7 @@ Scroll-driven video experiences often repeat the same difficult work: resolving 
 
 The planned npm package is `@frame-by-frame/core`.
 
-The repository now contains the deterministic timeline, shared scroll controller, native video renderer, advanced media loading, responsive overrides, and reduced-motion behavior. The package remains private at version `0.0.0` while the remaining v1 behavior and release process are built.
+The repository now contains the deterministic timeline, shared scroll controller, native video and opt-in 2D canvas renderers, advanced media loading, responsive overrides, and reduced-motion behavior. The package remains private at version `0.0.0` while v1 hardening and the release process are built.
 
 ## Design principles
 
@@ -47,8 +47,8 @@ Development is intentionally incremental:
 1. Establish the public contract and deterministic mapping engine.
 2. Implement source observation, scheduling, and controller lifecycle.
 3. Add native video rendering, full/on-demand loading, and aggregate readiness. **Completed.**
-4. Add responsive behavior, accessibility preferences, and canvas rendering. **Current stage; canvas remains.**
-5. Harden performance, documentation, tests, and release automation.
+4. Add responsive behavior, accessibility preferences, and canvas rendering. **Completed.**
+5. Harden performance, documentation, tests, and release automation. **Current stage.**
 6. Release the core before adding framework examples.
 7. Add `examples/vue` as the first framework example; React and other examples will be open to community pull requests.
 
@@ -171,6 +171,43 @@ The native renderer resolves or creates one `HTMLVideoElement` per binding, sele
 
 Read the [controller API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/controller.md) for source resolution, lifecycle, state, events, errors, and scheduling behavior, and the [native video guide](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/video.md) for targets, clips, loading, seeking, and cleanup.
 
+## Optional canvas rendering
+
+Canvas support is opt-in so the default package entry stays focused on native video. Import the canvas-enabled factory when a binding needs explicit cropping or a canvas presentation surface:
+
+```ts
+import { createFrameByFrame } from '@frame-by-frame/core/canvas';
+
+const controller = createFrameByFrame({
+  axes: {
+    y: {
+      bindings: [
+        {
+          id: 'product',
+          renderer: 'canvas',
+          target: '#product-canvas',
+          clips: [{ id: 'turntable', sources: [{ src: '/product.mp4' }] }],
+          canvas: { fit: 'cover', pixelRatio: 'device' },
+          segments: [
+            {
+              scroll: [0, 1],
+              scrollUnit: 'progress',
+              clip: 'turntable',
+              media: [0, 8],
+            },
+          ],
+        },
+      ],
+    },
+  },
+});
+
+await controller.mount();
+await controller.whenReady();
+```
+
+The package creates a detached video decoder unless `canvas.decoderTarget` is supplied. It supports centered `contain`, `cover`, `fill`, and `none`, device-aware bitmap sizing, resize redraw without a new seek, and the existing loading and breakpoint policies. Canvas adds frame-copy, memory, and CORS costs; read the [2D canvas guide](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/canvas.md) before choosing it over native video.
+
 ## Development
 
 Use Node.js 24 LTS and pnpm 11 for local development. Node.js 22.18+ and 24.11+ are validated in CI.
@@ -184,7 +221,7 @@ Individual commands are available for formatting, linting, type checking, tests,
 
 Native media behavior is covered with deterministic structural fakes in Node. Browser validation remains a manual operator step because codec, decoder, and frame-presentation behavior varies by runtime and media asset.
 
-See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling, [ADR 0005](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0005-advanced-media-loading.md) for loading and cache ownership, and [ADR 0006](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0006-responsive-preferences.md) for responsive overrides, reduced motion, resize, and visibility.
+See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling, [ADR 0005](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0005-advanced-media-loading.md) for loading and cache ownership, [ADR 0006](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0006-responsive-preferences.md) for responsive overrides, reduced motion, resize, and visibility, and [ADR 0007](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0007-opt-in-canvas-renderer.md) for the optional video-backed canvas boundary.
 
 ## Contributing
 

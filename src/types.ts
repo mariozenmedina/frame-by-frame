@@ -89,8 +89,8 @@ export type ScrollSourceReference = ScrollSource | string | (() => ScrollSource 
 /** A direct, selected, or lazily resolved DOM element. */
 export type ElementReference<T extends Element = HTMLElement> = T | string | (() => T | null);
 
-/** The native renderer implemented by the current package stage. */
-export type RendererType = 'video';
+/** Renderer implementations available across the package entry points. */
+export type RendererType = 'video' | 'canvas';
 
 /** Native hints plus explicit package-managed full-file preload. */
 export type VideoPreload = 'none' | 'metadata' | 'auto' | 'full';
@@ -165,12 +165,10 @@ export interface VideoSeekConfig {
   readonly timeEpsilon?: number;
 }
 
-/** Timeline and video configuration shared by both target ownership modes. */
+/** Timeline and video-decoder configuration shared by every media binding. */
 export interface FrameByFrameBindingBaseConfig extends TimelineOptions {
   /** Unique binding ID within one controller. */
   readonly id: string;
-  /** Native video is the default and only renderer in this stage. */
-  readonly renderer?: 'video';
   /** Non-empty logical clips referenced by timeline segments. */
   readonly clips: readonly VideoClipConfig[];
   /** Binding-level eager or on-demand loading policy. */
@@ -181,20 +179,70 @@ export interface FrameByFrameBindingBaseConfig extends TimelineOptions {
   readonly seek?: VideoSeekConfig;
 }
 
-/** One named video timeline controlled by a scroll axis. */
+/** One named native-video timeline controlled by a scroll axis. */
 export type FrameByFrameBindingConfig = FrameByFrameBindingBaseConfig &
   (
     | {
+        /** Native video is the default renderer for the root package entry. */
+        readonly renderer?: 'video';
         /** Existing video target resolved during mount. */
         readonly target: ElementReference<HTMLVideoElement>;
         readonly mountTo?: never;
+        readonly canvas?: never;
       }
     | {
+        /** Native video is the default renderer for the root package entry. */
+        readonly renderer?: 'video';
         readonly target?: never;
         /** Container where the package creates and owns a video target. */
         readonly mountTo: ElementReference;
+        readonly canvas?: never;
       }
   );
+
+/** How a decoded video frame is fitted into the visible canvas. */
+export type CanvasFit = 'contain' | 'cover' | 'fill' | 'none';
+
+/** Canvas presentation and optional decoder ownership. */
+export interface CanvasRendererConfig {
+  /** Frame fitting mode; defaults to contain. */
+  readonly fit?: CanvasFit;
+  /** Bitmap-to-CSS scale; defaults to the current device pixel ratio. */
+  readonly pixelRatio?: number | 'device';
+  /** Canvas 2D interpolation setting; defaults to true. */
+  readonly imageSmoothingEnabled?: boolean;
+  /** Existing video used as the decoder instead of an internal detached element. */
+  readonly decoderTarget?: ElementReference<HTMLVideoElement>;
+}
+
+/** Canvas fields that responsive breakpoints may change without replacing ownership. */
+export interface CanvasRendererOverride {
+  readonly fit?: CanvasFit;
+  readonly pixelRatio?: number | 'device';
+  readonly imageSmoothingEnabled?: boolean;
+}
+
+/** One named canvas timeline backed by a native video decoder. */
+export type CanvasBindingConfig = FrameByFrameBindingBaseConfig &
+  (
+    | {
+        readonly renderer: 'canvas';
+        /** Existing visible canvas resolved during mount. */
+        readonly target: ElementReference<HTMLCanvasElement>;
+        readonly mountTo?: never;
+        readonly canvas?: CanvasRendererConfig;
+      }
+    | {
+        readonly renderer: 'canvas';
+        readonly target?: never;
+        /** Container where the package creates and owns a visible canvas. */
+        readonly mountTo: ElementReference;
+        readonly canvas?: CanvasRendererConfig;
+      }
+  );
+
+/** A video or canvas binding accepted by the opt-in canvas entry point. */
+export type CanvasFrameByFrameBindingConfig = FrameByFrameBindingConfig | CanvasBindingConfig;
 
 /** Configuration for one independent scroll axis. */
 export interface FrameByFrameAxisConfig {
@@ -208,6 +256,18 @@ export interface FrameByFrameAxisConfig {
 export interface FrameByFrameAxesConfig {
   readonly x?: false | FrameByFrameAxisConfig;
   readonly y?: false | FrameByFrameAxisConfig;
+}
+
+/** One axis accepted by the opt-in canvas entry point. */
+export interface CanvasFrameByFrameAxisConfig {
+  readonly enabled?: boolean;
+  readonly bindings: readonly CanvasFrameByFrameBindingConfig[];
+}
+
+/** Axes accepted by the opt-in canvas entry point. */
+export interface CanvasFrameByFrameAxesConfig {
+  readonly x?: false | CanvasFrameByFrameAxisConfig;
+  readonly y?: false | CanvasFrameByFrameAxisConfig;
 }
 
 /** Timeline and media fields that a responsive breakpoint may replace or merge. */
@@ -228,6 +288,12 @@ export interface FrameByFrameBindingOverride {
   readonly video?: VideoRendererConfig;
   /** Shallowly overrides native seek options. */
   readonly seek?: VideoSeekConfig;
+}
+
+/** Binding override accepted by the canvas-enabled responsive cascade. */
+export interface CanvasFrameByFrameBindingOverride extends FrameByFrameBindingOverride {
+  /** Shallowly overrides canvas presentation without changing the decoder target. */
+  readonly canvas?: CanvasRendererOverride;
 }
 
 /** Responsive changes for one existing controller axis. */
@@ -256,6 +322,27 @@ export interface FrameByFrameBreakpointConfig {
   readonly override: FrameByFrameBreakpointOverride;
 }
 
+/** Responsive axis changes accepted by the canvas-enabled entry point. */
+export interface CanvasFrameByFrameAxisOverride {
+  readonly enabled?: boolean;
+  readonly bindings?: readonly CanvasFrameByFrameBindingOverride[];
+}
+
+/** Responsive changes accepted by the canvas-enabled entry point. */
+export interface CanvasFrameByFrameBreakpointOverride {
+  readonly axes: {
+    readonly x?: false | CanvasFrameByFrameAxisOverride;
+    readonly y?: false | CanvasFrameByFrameAxisOverride;
+  };
+}
+
+/** One ordered media-query override for a canvas-enabled controller. */
+export interface CanvasFrameByFrameBreakpointConfig {
+  readonly id: string;
+  readonly query: string;
+  readonly override: CanvasFrameByFrameBreakpointOverride;
+}
+
 /** How an active reduced-motion preference affects media bindings. */
 export type ReducedMotionBehavior = 'first-frame' | 'last-frame' | 'disable' | 'ignore';
 
@@ -268,6 +355,14 @@ export interface FrameByFrameOptions {
   /** Ordered responsive overrides; later matching entries win. */
   readonly breakpoints?: readonly FrameByFrameBreakpointConfig[];
   /** Reduced-motion behavior; defaults to first-frame. */
+  readonly reducedMotion?: ReducedMotionBehavior;
+}
+
+/** Configuration captured by the opt-in canvas-enabled factory. */
+export interface CanvasFrameByFrameOptions {
+  readonly source?: ScrollSourceReference;
+  readonly axes: CanvasFrameByFrameAxesConfig;
+  readonly breakpoints?: readonly CanvasFrameByFrameBreakpointConfig[];
   readonly reducedMotion?: ReducedMotionBehavior;
 }
 
@@ -422,6 +517,11 @@ export interface FrameByFrameController {
   destroy(): void;
 }
 
+/** Controller returned by the opt-in canvas entry point. */
+export interface CanvasFrameByFrameController extends Omit<FrameByFrameController, 'getTarget'> {
+  getTarget(bindingId: string): HTMLVideoElement | HTMLCanvasElement | null;
+}
+
 /** Stable error codes currently emitted by the public package APIs. */
 export type FrameByFrameErrorCode =
   | 'INVALID_TIMELINE'
@@ -444,7 +544,10 @@ export type FrameByFrameErrorCode =
   | 'MEDIA_LOAD_FAILED'
   | 'FULL_PRELOAD_FAILED'
   | 'MEDIA_DECODE_FAILED'
-  | 'MEDIA_SEEK_FAILED';
+  | 'MEDIA_SEEK_FAILED'
+  | 'CANVAS_CONTEXT_UNAVAILABLE'
+  | 'CANVAS_DRAW_FAILED'
+  | 'CANVAS_SECURITY_ERROR';
 
 /** Structured context attached to a `FrameByFrameError`. */
 export type FrameByFrameErrorDetails = Readonly<Record<string, unknown>>;

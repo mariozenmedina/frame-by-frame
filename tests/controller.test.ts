@@ -83,6 +83,7 @@ class TestVideoRenderer implements VideoRenderer {
   unloadCalls = 0;
   destroyCalls = 0;
   whenReadyCalls = 0;
+  resizeCalls = 0;
   readiness: Promise<void> = Promise.resolve();
   config: ControllerBindingConfig;
   readonly activities: Parameters<VideoRenderer['setActivity']>[0][] = [];
@@ -140,6 +141,10 @@ class TestVideoRenderer implements VideoRenderer {
   unload(): void {
     this.unloadCalls += 1;
     this.state = { ...this.state, loadState: 'unloaded' };
+  }
+
+  resize(): void {
+    this.resizeCalls += 1;
   }
 
   getTarget(): HTMLVideoElement {
@@ -283,11 +288,12 @@ const createDependencies = (
       resolveSource: resolveScrollSource,
       sourceRegistry: new SourceRegistry(reportAsyncError),
       reportAsyncError,
-      createVideoRenderer: (config, onEvent) => {
+      createRenderer: (config, onEvent) => {
         const renderer = new TestVideoRenderer(config, config.target as HTMLVideoElement, onEvent);
         renderers.push(renderer);
         return renderer;
       },
+      supportedRenderers: new Set(['video']),
     },
   };
 };
@@ -549,7 +555,7 @@ describe('createFrameByFrame controller', () => {
       createOptions(environment.element as unknown as HTMLElement),
       {
         ...dependencies,
-        createVideoRenderer: (config, onEvent) => {
+        createRenderer: (config, onEvent) => {
           attempts += 1;
 
           if (attempts === 2) {

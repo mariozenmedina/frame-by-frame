@@ -104,6 +104,7 @@ describe('native video renderer', () => {
       loop: false,
       autoplay: false,
     });
+    renderer.resize();
     renderer.destroy();
     renderer.destroy();
     expect(release).toHaveBeenCalledOnce();

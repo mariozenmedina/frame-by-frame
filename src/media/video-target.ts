@@ -12,17 +12,17 @@ export interface ResolvedVideoTarget {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null;
 
-const isDocument = (value: unknown): value is Document =>
+export const isMediaDocument = (value: unknown): value is Document =>
   isRecord(value) &&
   value['nodeType'] === 9 &&
   typeof value['querySelector'] === 'function' &&
   typeof value['createElement'] === 'function';
 
-const isHtmlElement = (value: unknown): value is HTMLElement =>
+export const isMediaHtmlElement = (value: unknown): value is HTMLElement =>
   isRecord(value) &&
   value['nodeType'] === 1 &&
   typeof value['appendChild'] === 'function' &&
-  isDocument(value['ownerDocument']);
+  isMediaDocument(value['ownerDocument']);
 
 const getElementName = (value: Readonly<Record<string, unknown>>): string => {
   const localName = value['localName'];
@@ -35,7 +35,7 @@ const getElementName = (value: Readonly<Record<string, unknown>>): string => {
   return typeof tagName === 'string' ? tagName.toLowerCase() : '';
 };
 
-const isVideoElement = (value: unknown): value is HTMLVideoElement =>
+export const isMediaVideoElement = (value: unknown): value is HTMLVideoElement =>
   isRecord(value) &&
   value['nodeType'] === 1 &&
   getElementName(value) === 'video' &&
@@ -51,7 +51,7 @@ const isVideoElement = (value: unknown): value is HTMLVideoElement =>
 
 const getGlobalDocument = (): Document | null => {
   const candidate: unknown = (globalThis as { readonly document?: unknown }).document;
-  return isDocument(candidate) ? candidate : null;
+  return isMediaDocument(candidate) ? candidate : null;
 };
 
 const targetError = (
@@ -66,7 +66,11 @@ const targetError = (
   });
 };
 
-const resolveReference = (reference: unknown, bindingId: string, label: string): unknown => {
+export const resolveMediaReference = (
+  reference: unknown,
+  bindingId: string,
+  label: string,
+): unknown => {
   let candidate = reference;
 
   if (typeof candidate === 'function') {
@@ -145,7 +149,7 @@ export class VideoTargetRegistry {
 const createOwnedTarget = (mountTo: HTMLElement, bindingId: string): HTMLVideoElement => {
   const document: unknown = mountTo.ownerDocument;
 
-  if (!isDocument(document)) {
+  if (!isMediaDocument(document)) {
     throw new FrameByFrameError(
       'ENVIRONMENT_UNAVAILABLE',
       'The mount container does not expose an owner document.',
@@ -155,7 +159,7 @@ const createOwnedTarget = (mountTo: HTMLElement, bindingId: string): HTMLVideoEl
 
   const target: unknown = document.createElement('video');
 
-  if (!isVideoElement(target)) {
+  if (!isMediaVideoElement(target)) {
     return targetError(
       'INVALID_TARGET_TYPE',
       bindingId,
@@ -178,9 +182,9 @@ export const resolveVideoTarget = (
   let owned = false;
 
   if (config.target !== undefined) {
-    const candidate = resolveReference(config.target, config.id, 'video target');
+    const candidate = resolveMediaReference(config.target, config.id, 'video target');
 
-    if (!isVideoElement(candidate)) {
+    if (!isMediaVideoElement(candidate)) {
       return targetError(
         'INVALID_TARGET_TYPE',
         config.id,
@@ -191,9 +195,9 @@ export const resolveVideoTarget = (
 
     target = candidate;
   } else {
-    const candidate = resolveReference(config.mountTo, config.id, 'video mount container');
+    const candidate = resolveMediaReference(config.mountTo, config.id, 'video mount container');
 
-    if (!isHtmlElement(candidate)) {
+    if (!isMediaHtmlElement(candidate)) {
       return targetError(
         'INVALID_TARGET_TYPE',
         config.id,

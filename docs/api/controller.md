@@ -104,7 +104,7 @@ At least one axis must contain a binding. Binding IDs must be non-empty and uniq
 
 Pure configuration and timelines are validated and compiled by `createFrameByFrame()`. The source itself is resolved later by `mount()`.
 
-The root `@frame-by-frame/core` factory intentionally accepts native-video bindings only. The opt-in `@frame-by-frame/core/canvas` entry exports a compatible factory whose axes may combine video and canvas bindings. See the [2D canvas renderer guide](canvas.md) for its discriminated binding types and runtime behavior.
+The root `@frame-by-frame/core` factory intentionally accepts native-video bindings only. `@frame-by-frame/core/video` is an explicit alias with the same runtime and video-only types. The opt-in `@frame-by-frame/core/canvas` entry exports a compatible factory whose axes may combine video and canvas bindings. See the [native video guide](video.md#entry-points) and [2D canvas renderer guide](canvas.md) for their package boundaries.
 
 ## Responsive overrides
 

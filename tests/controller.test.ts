@@ -362,6 +362,59 @@ describe('createFrameByFrame controller', () => {
     expect(controller.getState().bindings['progress']?.resolution?.targetTime).toBe(15);
   });
 
+  it('resolves independent horizontal and vertical bindings simultaneously', async () => {
+    const { dependencies, environment } = createDependencies();
+    environment.element.scrollWidth = 300;
+    environment.element.clientWidth = 100;
+    environment.element.scrollLeft = 50;
+    environment.element.scrollHeight = 300;
+    environment.element.clientHeight = 100;
+    environment.element.scrollTop = 50;
+    const base = createOptions(environment.element as unknown as HTMLElement);
+    const horizontal = base.axes.x;
+
+    if (horizontal === undefined || horizontal === false) {
+      throw new Error('Expected a configured horizontal axis.');
+    }
+
+    const controller = createController(
+      {
+        ...base,
+        axes: {
+          ...base.axes,
+          x: { ...horizontal, enabled: true },
+        },
+      },
+      dependencies,
+    );
+
+    await controller.mount();
+    expect(controller.getState()).toMatchObject({
+      axes: {
+        x: { enabled: true, offset: 50, max: 200, progress: 0.25 },
+        y: { enabled: true, offset: 50, max: 200, progress: 0.25 },
+      },
+      bindings: {
+        horizontal: { resolution: { targetTime: 2.5 } },
+        pixels: { resolution: { targetTime: 5 } },
+        progress: { resolution: { targetTime: 12.5 } },
+      },
+    });
+
+    environment.element.scrollLeft = 100;
+    environment.element.scrollTop = 100;
+    environment.element.emitScroll();
+    environment.frameHost.flush();
+    expect(controller.getState()).toMatchObject({
+      bindings: {
+        horizontal: { resolution: { targetTime: 5 } },
+        pixels: { resolution: { targetTime: 10 } },
+        progress: { resolution: { targetTime: 15 } },
+      },
+    });
+    controller.destroy();
+  });
+
   it('shares one source listener across controllers', async () => {
     const { dependencies, environment } = createDependencies();
     const options = createOptions(environment.element as unknown as HTMLElement);

@@ -54,6 +54,8 @@ Development is intentionally incremental:
 
 Milestone details will be tracked through GitHub Issues as implementation begins.
 
+The [version 1 acceptance matrix](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/v1-acceptance.md) separates automated evidence from operator browser validation and release work that is still pending.
+
 ## Timeline mapping
 
 The first implemented runtime capability is a pure, SSR-safe timeline engine. It resolves a scroll coordinate to a clip ID and media time without reading the DOM or loading media.
@@ -169,6 +171,8 @@ Controllers sharing a canonical scroll source also share one passive scroll list
 
 The native renderer resolves or creates one `HTMLVideoElement` per binding, selects ordered source candidates, and writes precise `currentTime` seeks. It supports native hints, explicit full-file preload with a shared reference-counted cache, and manual, viewport, or first-use activation. `whenReady()` provides one aggregate Promise for loading-screen orchestration, while `loadprogress` exposes byte progress when available. Ordered media-query overrides can replace timelines and media options without replacing mounted targets. Reduced-motion preferences default to pinning the first frame and can instead pin the last frame, disable media work, or be explicitly ignored. While a seek is in flight, only the latest pending target is retained. When available, `requestVideoFrameCallback()` reports the composed frame; other browsers use native media events as an approximation.
 
+The root import is recommended. `@frame-by-frame/core/video` exposes the same video-only API as an explicit renderer-named alias; canvas bindings remain available only through `@frame-by-frame/core/canvas`.
+
 Read the [controller API reference](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/controller.md) for source resolution, lifecycle, state, events, errors, and scheduling behavior, and the [native video guide](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/api/video.md) for targets, clips, loading, seeking, and cleanup.
 
 ## Optional canvas rendering
@@ -221,7 +225,7 @@ Individual commands are available for formatting, linting, type checking, tests,
 
 Native media behavior is covered with deterministic structural fakes in Node. Browser validation remains a manual operator step because codec, decoder, and frame-presentation behavior varies by runtime and media asset.
 
-See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling, [ADR 0005](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0005-advanced-media-loading.md) for loading and cache ownership, [ADR 0006](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0006-responsive-preferences.md) for responsive overrides, reduced motion, resize, and visibility, and [ADR 0007](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0007-opt-in-canvas-renderer.md) for the optional video-backed canvas boundary.
+See [ADR 0001](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0001-package-foundation.md) for package and toolchain decisions, [ADR 0002](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0002-timeline-mapping-contract.md) for the pure mapping contract, [ADR 0003](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0003-shared-scroll-controller.md) for source scheduling and lifecycle decisions, [ADR 0004](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0004-native-video-renderer.md) for native media ownership and seek scheduling, [ADR 0005](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0005-advanced-media-loading.md) for loading and cache ownership, [ADR 0006](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0006-responsive-preferences.md) for responsive overrides, reduced motion, resize, and visibility, [ADR 0007](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0007-opt-in-canvas-renderer.md) for the optional video-backed canvas boundary, and [ADR 0008](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/decisions/0008-v1-contract-hardening.md) for the frozen v1 surface and package-entry contract.
 
 ## Contributing
 

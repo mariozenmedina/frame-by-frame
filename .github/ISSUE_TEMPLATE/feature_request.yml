@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Start with the problem and desired behavior. Large implementation pull requests should wait until the direction is accepted.
+        Start with the problem and desired behavior. Review the [documentation](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/README.md) and [version 1 acceptance matrix](https://github.com/mariozenmedina/frame-by-frame/blob/main/docs/v1-acceptance.md). Large implementation pull requests should wait until the direction is accepted.
 
   - type: textarea
     id: problem

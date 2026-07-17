@@ -10,6 +10,8 @@ Link the accepted issue or explain why a prior issue was not needed.
 
 List the automated checks and manual validation performed. Include commands and relevant environments.
 
+For documentation-only changes, include `pnpm format:check` and `pnpm check:docs`. For implementation changes, run `pnpm check` before requesting review.
+
 ## Compatibility and performance
 
 Describe public API, type, SSR, browser, bundle-size, scheduling, loading, rendering, or cleanup impact. Write `None` when not applicable.
@@ -19,6 +21,7 @@ Describe public API, type, SSR, browser, bundle-size, scheduling, loading, rende
 - [ ] The change is focused and contains no unrelated refactor.
 - [ ] Tests cover new or changed behavior where applicable.
 - [ ] Public documentation is updated where applicable.
+- [ ] Documentation links pass `pnpm check:docs`.
 - [ ] Imports remain SSR-safe and the core remains framework agnostic.
 - [ ] Sensitive information is not included.
 - [ ] I agree that this contribution may be distributed under the MIT License.

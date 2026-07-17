@@ -2,6 +2,8 @@
 
 This matrix tracks the 23 product criteria required before the first stable core release. It separates deterministic repository evidence from behavior that still needs the operator's real-browser run and from publication work reserved for the release stage.
 
+Use the [documentation map](README.md) for recipes, operational guides, API references, troubleshooting, and architecture decisions.
+
 Status meanings:
 
 - **Automated:** covered by the required Node-based repository gates.
@@ -33,8 +35,8 @@ The project does not claim a stable v1 while any operator or release item remain
 | 19  | Typed controller state and events are public                  | Automated        | Runtime snapshots and forwarding are covered by [`tests/controller.test.ts`](../tests/controller.test.ts); inference and immutability are covered by [`tests/types`](../tests/types).                                                                                                                                                                                   |
 | 20  | Destroy releases every package-owned resource                 | Operator pending | Listener and observer cleanup is covered by [`tests/source-scheduler.test.ts`](../tests/source-scheduler.test.ts) and [`tests/environment-observer.test.ts`](../tests/environment-observer.test.ts); media ownership, fetch, cache, callback, and object-URL cleanup are covered by renderer and asset-cache tests. Browser lifecycle confirmation remains in Stage 8D. |
 | 21  | SSR import does not access browser globals                    | Automated        | Built entries are imported in Node by [`tests/package-imports.mjs`](../tests/package-imports.mjs), and controller creation without a DOM is covered by controller tests.                                                                                                                                                                                                |
-| 22  | Automated tests cover behavior and performance-sensitive work | Automated        | The required [`pnpm check` gate](../package.json) runs unit, integration, type, coverage, deterministic operation-count, build, bundle-budget, declaration, and package-entry validation.                                                                                                                                                                               |
-| 23  | Frame accuracy limitations are documented                     | Automated        | See the [timeline reference](api/timeline.md#frame-snapping) and [native video guide](api/video.md#frame-observation-and-accuracy).                                                                                                                                                                                                                                     |
+| 22  | Automated tests cover behavior and performance-sensitive work | Automated        | The required [`pnpm check` gate](../package.json) runs documentation-link, unit, integration, type, coverage, deterministic operation-count, build, bundle-budget, declaration, and package-entry validation.                                                                                                                                                           |
+| 23  | Frame accuracy limitations are documented                     | Automated        | See the [timeline reference](api/timeline.md#frame-snapping) and [native video guide](api/video.md#frame-observation).                                                                                                                                                                                                                                                  |
 
 ## Release boundary
 

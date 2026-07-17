@@ -1,72 +1,107 @@
 # Contributing to frame-by-frame
 
-Thank you for considering a contribution. `frame-by-frame` is being built as a focused, framework-agnostic core with a public design process and a low-friction contribution model.
+Thank you for considering a contribution. `frame-by-frame` is built as a focused, framework-agnostic core with public design rationale and a low-friction contribution model.
 
 ## Before you start
 
 - Read the [Code of Conduct](CODE_OF_CONDUCT.md).
-- Search existing issues and pull requests before opening a new one.
+- Use the [documentation map](docs/README.md) and search existing issues and pull requests.
 - Use the provided issue forms for bugs and feature proposals.
-- Do not disclose security vulnerabilities or sensitive conduct reports in a public issue. Follow [SECURITY.md](SECURITY.md) or the private reporting instructions in the [Code of Conduct](CODE_OF_CONDUCT.md).
-- Keep public project communication, code, tests, and documentation in English.
+- Follow [SECURITY.md](SECURITY.md) for vulnerabilities and the private instructions in the Code of Conduct for sensitive conduct reports.
+- Keep project communication, code, tests, commit messages, and public documentation in English.
 
-## What belongs in the project
+## Project scope
 
-Contributions should support the core goals: deterministic scroll-to-video mapping, predictable lifecycle behavior, efficient browser scheduling, strong TypeScript contracts, accessibility, and framework independence.
+Contributions should support deterministic scroll-to-video mapping, predictable lifecycle behavior, bounded browser work, strong TypeScript contracts, accessibility, and framework independence.
 
-The core must not gain a runtime dependency on Vue, React, or another frontend framework. Framework integrations live under `examples/` after the first core release. Vue will be the first maintained example; examples for other frameworks are welcome through pull requests once the example contract is documented.
+The core must not gain a runtime dependency on Vue, React, or another frontend framework. Framework integrations will live under `examples/` after the first core release. Vue will be the first maintained example; other framework examples will be open to pull requests once the example contract is documented.
 
-## Proposing a change
+The project is not a general-purpose video player, encoder, streaming implementation, scroll hijacker, or guarantee of exact frame presentation for every codec and browser.
 
-Open an issue before investing in a large change when it affects any of the following:
+## Propose significant changes first
 
-- the public API or TypeScript types;
-- package exports or compatibility;
+Open an issue before investing in a change that affects:
+
+- public API or TypeScript types;
+- package exports or browser compatibility;
 - lifecycle, scheduling, or cleanup guarantees;
-- loading and caching behavior;
-- renderer boundaries;
+- loading, caching, or renderer ownership;
 - accessibility defaults;
-- the scope of version 1.
+- bundle budgets or required repository gates;
+- version 1 scope.
 
-Describe the problem first, then the proposed behavior, alternatives, trade-offs, and any compatibility impact. Small documentation corrections can go directly to a pull request.
+Describe the problem, observable behavior, alternatives, trade-offs, and compatibility impact. Wait for accepted direction before implementation. Small documentation corrections and clearly scoped test improvements may go directly to a pull request.
+
+## Repository map
+
+| Path              | Responsibility                                                    |
+| ----------------- | ----------------------------------------------------------------- |
+| `src/core/`       | Controller lifecycle, configuration, state, and events            |
+| `src/mapping/`    | Pure deterministic scroll-to-time mapping                         |
+| `src/media/`      | Native video, loading/cache, targets, and opt-in canvas rendering |
+| `src/responsive/` | Media-query, resize, visibility, and preference observation       |
+| `src/scroll/`     | Scroll-source resolution and shared frame scheduling              |
+| `tests/`          | Runtime, package, performance-invariant, and public type tests    |
+| `docs/api/`       | Exact public contracts                                            |
+| `docs/recipes/`   | Focused integration patterns                                      |
+| `docs/guides/`    | Operational and product guidance                                  |
+| `docs/decisions/` | Accepted architecture decisions                                   |
+| `scripts/`        | Dependency-free repository validation                             |
+| `.github/`        | CI, security automation, and contribution templates               |
+
+Private maintainer planning is intentionally outside the public repository contract.
 
 ## Development workflow
 
-Use Node.js 24 LTS and pnpm 11 for local development. The minimum validated Node.js lines are 22.18 and 24.11.
+Use Node.js 24 LTS and pnpm 11. CI also validates the supported Node.js 22 line.
 
 ```sh
 pnpm install
 pnpm check
 ```
 
-Useful focused commands:
+`pnpm check` is the required local gate. Use focused commands while iterating:
 
-```sh
-pnpm format
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm test:coverage
-pnpm build
-pnpm check:bundle
-```
+| Change                                      | Minimum focused validation before `pnpm check`          |
+| ------------------------------------------- | ------------------------------------------------------- |
+| Markdown or contribution templates          | `pnpm format:check` and `pnpm check:docs`               |
+| Runtime behavior                            | `pnpm test:run`, `pnpm typecheck`, and `pnpm lint`      |
+| Public types or entries                     | `pnpm typecheck`, `pnpm build`, and `pnpm test:package` |
+| Performance-sensitive or renderer isolation | `pnpm test:coverage` and `pnpm check:bundle`            |
+| Package metadata or emitted output          | `pnpm build` and `pnpm test:package`                    |
 
-`pnpm check` is the required local quality gate. It checks formatting, typed lint rules, TypeScript, unit-test coverage thresholds, deterministic performance invariants, the ESM build, gzip budgets and renderer isolation, package metadata, and declaration compatibility.
+Formatting fixes may be applied with `pnpm format`. Browser validation is an explicit operator task; contributors should document manual environments and results when a change depends on real media behavior.
 
-Every implementation pull request is expected to:
+## Tests and compatibility
+
+Every implementation pull request should:
 
 - include focused tests for new or changed behavior;
-- update public documentation when behavior changes;
 - preserve SSR-safe imports and framework independence;
-- avoid unrelated refactors;
-- pass the repository's documented quality checks.
+- cover cleanup and failure paths for newly owned resources;
+- use deterministic assertions instead of machine-specific elapsed-time or FPS thresholds;
+- update public types and type tests together;
+- avoid unrelated refactors.
+
+Do not weaken coverage, bundle, dependency, or code-scanning gates to make a change pass. A threshold change requires public rationale and maintainer agreement.
+
+## Documentation standards
+
+Update documentation in the same pull request whenever observable behavior changes.
+
+- Keep the root README concise; add task-oriented detail to `docs/`.
+- Put copyable integration patterns in `docs/recipes/`, operational advice in `docs/guides/`, and exact behavior in `docs/api/`.
+- Record durable architectural trade-offs in `docs/decisions/` with the next numbered ADR.
+- Use relative links for files inside the repository and run `pnpm check:docs`.
+- Use tested names and defaults. Clearly label unreleased, pending, approximate, or browser-dependent behavior.
+- Do not promise performance numbers, exact frame presentation, browser support, or release availability without accepted evidence.
 
 ## Pull requests
 
-Keep pull requests small enough to review and explain why the change is needed. Complete the pull request template, link related issues, describe validation, and call out breaking or performance-sensitive behavior.
+Keep each pull request small enough to review. Complete the template, link its issue when applicable, explain the user-visible outcome, list validation commands, and call out compatibility, accessibility, performance, loading, and cleanup impact.
 
-Maintainers may request changes, split a proposal, or decline work that does not fit the project scope. Significant decisions should include a public rationale. See [GOVERNANCE.md](GOVERNANCE.md) for the decision process.
+Maintainers may request changes, ask for a proposal to be split, or decline work outside the project scope. Significant decisions include a public rationale under the [governance model](GOVERNANCE.md).
 
 ## Licensing contributions
 
-This project uses the MIT License. By submitting a contribution, you agree that your contribution may be distributed under the same license. The project does not currently require a Contributor License Agreement or Developer Certificate of Origin sign-off.
+This project uses the MIT License. By submitting a contribution, you agree that it may be distributed under the same license. The project does not currently require a Contributor License Agreement or Developer Certificate of Origin sign-off.

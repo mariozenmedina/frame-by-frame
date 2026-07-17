@@ -4,6 +4,22 @@ Each controller binding owns one native `HTMLVideoElement`. A binding can use an
 
 This renderer is included by the root `@frame-by-frame/core` factory. The opt-in canvas entry reuses the same loading and seeking pipeline behind a visible canvas; see the [2D canvas renderer guide](canvas.md) for the additional frame-copy and sizing behavior.
 
+## Entry points
+
+The root import is the recommended native-video API:
+
+```ts
+import { createFrameByFrame } from '@frame-by-frame/core';
+```
+
+Projects that prefer a renderer-named import may use the equivalent explicit alias:
+
+```ts
+import { createFrameByFrame } from '@frame-by-frame/core/video';
+```
+
+Both entries expose the same factory, timeline helper, error class, and video-only TypeScript contract. Neither accepts canvas bindings. Canvas requires the dedicated `@frame-by-frame/core/canvas` entry.
+
 > [!IMPORTANT]
 > Native media APIs depend on browser, codec, server range support, and asset encoding. `frame-by-frame` bounds its scheduling work, but cannot guarantee exact frame presentation for every media file.
 

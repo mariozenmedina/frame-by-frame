@@ -16,6 +16,17 @@ describe('package entry points', () => {
     ]);
   });
 
+  it('exposes the root video-only API through the explicit video entry point', () => {
+    expect(Object.keys(video).sort()).toEqual([
+      'FrameByFrameError',
+      'createFrameByFrame',
+      'createTimeline',
+    ]);
+    expect(video.createFrameByFrame).toBe(core.createFrameByFrame);
+    expect(video.createTimeline).toBe(core.createTimeline);
+    expect(video.FrameByFrameError).toBe(core.FrameByFrameError);
+  });
+
   it('exposes the canvas-enabled controller and pure APIs from the canvas entry point', () => {
     expect(Object.keys(canvas).sort()).toEqual([
       'FrameByFrameError',
@@ -94,10 +105,56 @@ describe('package entry points', () => {
     videoController.destroy();
   });
 
-  it.each([
-    ['video', video],
-    ['types', types],
-  ])('keeps the reserved %s entry point free of runtime exports', (_name, entryPoint) => {
-    expect(Object.keys(entryPoint)).toEqual([]);
+  it('shares decoder ownership across the canvas and explicit video entries', async () => {
+    const scroll = createFakeScrollEnvironment();
+    const mediaDocument = new FakeMediaDocument();
+    const visibleCanvas = new FakeCanvasElement(mediaDocument);
+    const sharedVideo = new FakeVideoElement();
+    const source = scroll.element as unknown as HTMLElement;
+    const canvasController = canvas.createFrameByFrame({
+      source,
+      axes: {
+        y: {
+          bindings: [
+            {
+              id: 'canvas',
+              renderer: 'canvas',
+              target: visibleCanvas.asCanvas(),
+              canvas: { decoderTarget: sharedVideo.asVideo() },
+              clips: [{ id: 'clip', sources: [{ src: '/canvas.mp4' }] }],
+              segments: [{ scroll: [0, 1], media: [0, 1] }],
+            },
+          ],
+        },
+      },
+    });
+    const videoController = video.createFrameByFrame({
+      source,
+      axes: {
+        y: {
+          bindings: [
+            {
+              id: 'video',
+              target: sharedVideo.asVideo(),
+              clips: [{ id: 'clip', sources: [{ src: '/video.mp4' }] }],
+              segments: [{ scroll: [0, 1], media: [0, 1] }],
+            },
+          ],
+        },
+      },
+    });
+
+    await canvasController.mount();
+    await expect(videoController.mount()).rejects.toMatchObject({ code: 'TARGET_CONFLICT' });
+    expect(canvasController.getState().status).toBe('ready');
+
+    canvasController.destroy();
+    await expect(videoController.mount()).resolves.toBeUndefined();
+    expect(videoController.getTarget('video')).toBe(sharedVideo);
+    videoController.destroy();
+  });
+
+  it('keeps the types entry point free of runtime exports', () => {
+    expect(Object.keys(types)).toEqual([]);
   });
 });

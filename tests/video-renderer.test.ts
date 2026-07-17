@@ -208,6 +208,34 @@ describe('native video renderer', () => {
     ]);
   });
 
+  it('keeps one in-flight seek and only the latest value from a large update burst', async () => {
+    const target = new FakeVideoElement();
+    const { handle } = createHandle(target);
+    const renderer = createNativeVideoRenderer(
+      compileBinding(target, [{ id: 'intro', sources: [{ src: '/intro.mp4' }], preload: 'auto' }]),
+      handle,
+      vi.fn(),
+    );
+
+    renderer.setResolution(resolveAt('intro', 1));
+    const loading = renderer.load();
+    target.duration = 10;
+    target.emit('loadedmetadata');
+    await loading;
+    expect(target.seekAssignments).toEqual([1]);
+
+    for (let index = 1; index <= 1_000; index += 1) {
+      renderer.setResolution(resolveAt('intro', 2 + index / 1_000));
+    }
+
+    expect(target.seekAssignments).toEqual([1]);
+    target.emit('seeked');
+    expect(target.seekAssignments).toEqual([1, 3]);
+    target.emit('seeked');
+    expect(target.seekAssignments).toHaveLength(2);
+    renderer.destroy();
+  });
+
   it('tries ordered source candidates and reports a binding-scoped terminal failure', () => {
     const target = new FakeVideoElement();
     const events = vi.fn<(event: VideoRendererEvent) => void>();

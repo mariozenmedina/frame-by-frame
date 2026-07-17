@@ -162,14 +162,18 @@ describe('canvas renderer', () => {
     expect(renderer.getState()).toMatchObject({ loadState: 'unloaded', presentedTime: null });
   });
 
-  it('deduplicates seek fallback and native frame notifications for the same output', async () => {
+  it('deduplicates a large burst of fallback and native frame notifications', async () => {
     const { canvas, decoder, events, renderer } = setupRenderer();
     decoder.enableFrameCallbacks();
     renderer.setResolution(resolution(3));
     decoder.duration = 10;
     decoder.emit('loadedmetadata');
-    decoder.emit('loadeddata');
-    decoder.emit('seeked');
+
+    for (let index = 0; index < 1_000; index += 1) {
+      decoder.emit('loadeddata');
+      decoder.emit('seeked');
+    }
+
     await Promise.resolve();
     decoder.presentFrame({ mediaTime: 3, width: 1920, height: 1080 });
 

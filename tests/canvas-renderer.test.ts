@@ -223,6 +223,30 @@ describe('canvas renderer', () => {
     renderer.destroy();
   });
 
+  it('attributes a resize redraw to the last presented frame while a seek is pending', async () => {
+    const { canvas, decoder, events, renderer } = setupRenderer({ pixelRatio: 1 });
+    decoder.enableFrameCallbacks();
+    renderer.setResolution(resolution(1));
+    decoder.duration = 10;
+    decoder.emit('loadedmetadata');
+    decoder.emit('loadeddata');
+    decoder.emit('seeked');
+    await Promise.resolve();
+
+    renderer.setResolution(resolution(2));
+    expect(decoder.currentTime).toBe(2);
+    canvas.clientWidth = 400;
+    canvas.clientHeight = 200;
+    renderer.resize();
+
+    expect(events.filter((event) => event.type === 'frame').at(-1)).toMatchObject({
+      type: 'frame',
+      presentedTime: 1,
+    });
+    expect(renderer.getState().presentedTime).toBe(1);
+    renderer.destroy();
+  });
+
   it('supports load, suspended activity, deferred draw readiness, unload, and cancelled config', async () => {
     const { canvas, decoder, renderer } = setupRenderer();
     decoder.videoWidth = 0;

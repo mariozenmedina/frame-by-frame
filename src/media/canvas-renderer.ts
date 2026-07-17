@@ -373,7 +373,13 @@ class CanvasRenderer implements MediaRenderer {
     }
 
     this.#lastDrawSignature = null;
-    this.#drawDecoderFrame(null, null, null, true);
+    this.#drawDecoderFrame(
+      null,
+      null,
+      null,
+      true,
+      this.#presentedTime ?? this.#decoder.currentTime,
+    );
   }
 
   getTarget(): HTMLCanvasElement {

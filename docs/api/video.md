@@ -2,6 +2,8 @@
 
 Each controller binding owns one native `HTMLVideoElement`. A binding can use an existing video through `target`, or ask the package to create one inside `mountTo`.
 
+This renderer is included by the root `@frame-by-frame/core` factory. The opt-in canvas entry reuses the same loading and seeking pipeline behind a visible canvas; see the [2D canvas renderer guide](canvas.md) for the additional frame-copy and sizing behavior.
+
 > [!IMPORTANT]
 > Native media APIs depend on browser, codec, server range support, and asset encoding. `frame-by-frame` bounds its scheduling work, but cannot guarantee exact frame presentation for every media file.
 

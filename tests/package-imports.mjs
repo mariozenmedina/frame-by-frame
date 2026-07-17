@@ -10,6 +10,9 @@ const [core, video, canvas, types] = await Promise.all([
 assert.equal(typeof core.createTimeline, 'function');
 assert.equal(typeof core.createFrameByFrame, 'function');
 assert.equal(typeof core.FrameByFrameError, 'function');
+assert.equal(typeof canvas.createFrameByFrame, 'function');
+assert.equal(typeof canvas.createTimeline, 'function');
+assert.equal(typeof canvas.FrameByFrameError, 'function');
 
 const controller = core.createFrameByFrame({
   axes: {
@@ -26,6 +29,23 @@ const controller = core.createFrameByFrame({
   },
 });
 assert.equal(controller.getState().status, 'idle');
+
+const canvasController = canvas.createFrameByFrame({
+  axes: {
+    y: {
+      bindings: [
+        {
+          id: 'canvas',
+          renderer: 'canvas',
+          target: '#canvas',
+          clips: [{ id: 'clip', sources: [{ src: '/clip.mp4' }] }],
+          segments: [{ media: [0, 1], scroll: [0, 1] }],
+        },
+      ],
+    },
+  },
+});
+assert.equal(canvasController.getState().bindings.canvas.renderer, 'canvas');
 
 const timeline = core.createTimeline({
   segments: [
@@ -44,5 +64,4 @@ assert.deepEqual(timeline.resolve(10), {
   targetTime: 20,
 });
 assert.deepEqual(Object.keys(video), []);
-assert.deepEqual(Object.keys(canvas), []);
 assert.deepEqual(Object.keys(types), []);

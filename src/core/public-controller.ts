@@ -7,15 +7,15 @@ import { SourceRegistry } from '../scroll/source-scheduler.js';
 import type { VideoRendererFactory } from '../media/video-renderer.js';
 import type { FrameByFrameController, FrameByFrameOptions } from '../types.js';
 
-const reportAsyncError = (error: unknown): void => {
+export const reportAsyncError = (error: unknown): void => {
   globalThis.queueMicrotask((): void => {
     throw error;
   });
 };
 
-const sourceRegistry = new SourceRegistry(reportAsyncError);
-const videoTargetRegistry = new VideoTargetRegistry();
-const createVideoRenderer: VideoRendererFactory = (config, onEvent, activity) => {
+export const sourceRegistry: SourceRegistry = new SourceRegistry(reportAsyncError);
+export const videoTargetRegistry: VideoTargetRegistry = new VideoTargetRegistry();
+export const createVideoRenderer: VideoRendererFactory = (config, onEvent, activity) => {
   const handle = resolveVideoTarget(config, videoTargetRegistry);
 
   try {
@@ -32,5 +32,6 @@ export const createFrameByFrame = (options: FrameByFrameOptions): FrameByFrameCo
     resolveSource: resolveScrollSource,
     sourceRegistry,
     reportAsyncError,
-    createVideoRenderer,
-  });
+    createRenderer: createVideoRenderer,
+    supportedRenderers: new Set(['video']),
+  }) as FrameByFrameController;

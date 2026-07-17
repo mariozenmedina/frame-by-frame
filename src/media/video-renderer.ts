@@ -67,7 +67,7 @@ export interface VideoRendererDependencies {
   readonly assetCache: AssetCache;
   readonly resolveUrl: (source: string, target: HTMLVideoElement) => string;
   readonly observeNearViewport: (
-    target: HTMLVideoElement,
+    target: Element,
     rootMargin: string,
     onEnter: () => void,
   ) => () => void;
@@ -124,16 +124,23 @@ export type VideoRendererEvent =
       readonly error: FrameByFrameError;
     };
 
-export interface VideoRenderer {
+/** Renderer contract shared by native-video and canvas presentation. */
+export interface MediaRenderer {
   prepareConfig(config: ControllerBindingConfig): VideoRendererConfigTransaction;
   setActivity(activity: VideoRendererActivity): void;
   setResolution(resolution: TimelineResolution | null): void;
   load(): Promise<void>;
   whenReady(): Promise<void>;
   unload(): void;
-  getTarget(): HTMLVideoElement;
+  resize(): void;
+  getTarget(): HTMLVideoElement | HTMLCanvasElement;
   getState(): VideoRendererState;
   destroy(): void;
+}
+
+/** Native renderer specialization used by the video-only entry point. */
+export interface VideoRenderer extends MediaRenderer {
+  getTarget(): HTMLVideoElement;
 }
 
 export type VideoRendererActivity = 'active' | 'suspended' | 'disabled';
@@ -148,6 +155,12 @@ export type VideoRendererFactory = (
   onEvent: (event: VideoRendererEvent) => void,
   activity?: VideoRendererActivity,
 ) => VideoRenderer;
+
+export type MediaRendererFactory = (
+  config: ControllerBindingConfig,
+  onEvent: (event: VideoRendererEvent) => void,
+  activity?: VideoRendererActivity,
+) => MediaRenderer;
 
 const defaultAssetCache = new AssetCache({
   fetch: (url, init) => globalThis.fetch(url, init),
@@ -339,6 +352,7 @@ class NativeVideoRenderer implements VideoRenderer {
   readonly #waiters = new Set<LoadWaiter>();
   readonly #readinessWaiters = new Set<ReadinessWaiter>();
   readonly #dependencies: VideoRendererDependencies;
+  readonly #viewportTarget: Element;
   readonly #fullAssets = new Map<string, FullAssetPreparation>();
   readonly #loadProgress = new Map<string, VideoLoadProgress>();
 
@@ -372,12 +386,14 @@ class NativeVideoRenderer implements VideoRenderer {
     onEvent: (event: VideoRendererEvent) => void,
     dependencies: VideoRendererDependencies,
     activity: VideoRendererActivity,
+    viewportTarget: Element,
   ) {
     this.#config = config;
     this.#handle = handle;
     this.#target = handle.target;
     this.#onEvent = onEvent;
     this.#dependencies = dependencies;
+    this.#viewportTarget = viewportTarget;
     this.#activity = activity;
     this.#snapshot = handle.owned ? null : snapshotTarget(this.#target);
     configureTarget(this.#target, config, handle.owned);
@@ -388,7 +404,7 @@ class NativeVideoRenderer implements VideoRenderer {
     } else if (activity === 'active' && config.loading.trigger === 'target-near-viewport') {
       try {
         this.#stopObserving = dependencies.observeNearViewport(
-          this.#target,
+          this.#viewportTarget,
           config.loading.rootMargin ?? '0px',
           (): void => {
             this.#activate(true, true);
@@ -693,6 +709,10 @@ class NativeVideoRenderer implements VideoRenderer {
     this.#resetSource('unloaded');
   }
 
+  resize(): void {
+    this.#assertNotDestroyed();
+  }
+
   getTarget(): HTMLVideoElement {
     this.#assertNotDestroyed();
     return this.#target;
@@ -781,7 +801,7 @@ class NativeVideoRenderer implements VideoRenderer {
   #observeNearViewport(config: ControllerBindingConfig, onEnter: () => void): () => void {
     try {
       return this.#dependencies.observeNearViewport(
-        this.#target,
+        this.#viewportTarget,
         config.loading.rootMargin ?? '0px',
         onEnter,
       );
@@ -1569,4 +1589,6 @@ export const createNativeVideoRenderer = (
   onEvent: (event: VideoRendererEvent) => void,
   dependencies: VideoRendererDependencies = defaultDependencies,
   activity: VideoRendererActivity = 'active',
-): VideoRenderer => new NativeVideoRenderer(config, handle, onEvent, dependencies, activity);
+  viewportTarget: Element = handle.target,
+): VideoRenderer =>
+  new NativeVideoRenderer(config, handle, onEvent, dependencies, activity, viewportTarget);

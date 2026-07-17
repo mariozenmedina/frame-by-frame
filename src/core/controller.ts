@@ -9,10 +9,10 @@ import type {
   ControllerProgram,
 } from './controller-config.js';
 import type {
-  VideoRenderer,
+  MediaRenderer,
+  MediaRendererFactory,
   VideoRendererConfigTransaction,
   VideoRendererEvent,
-  VideoRendererFactory,
   VideoRendererState,
 } from '../media/video-renderer.js';
 import type {
@@ -29,9 +29,10 @@ import type {
 } from '../scroll/source-scheduler.js';
 import type {
   AxisName,
+  CanvasFrameByFrameController,
+  CanvasFrameByFrameOptions,
   FrameByFrameAxisState,
   FrameByFrameBindingState,
-  FrameByFrameController,
   FrameByFrameErrorCode,
   FrameByFrameEventMap,
   FrameByFrameOptions,
@@ -39,6 +40,7 @@ import type {
   FrameByFrameStatus,
   FrameByFrameUpdateReason,
   ScrollSource,
+  RendererType,
   TimelineResolution,
 } from '../types.js';
 
@@ -46,7 +48,8 @@ export interface ControllerDependencies {
   readonly resolveSource: (reference: unknown) => ResolvedScrollSource;
   readonly sourceRegistry: SourceRegistry;
   readonly reportAsyncError: AsyncErrorReporter;
-  readonly createVideoRenderer: VideoRendererFactory;
+  readonly createRenderer: MediaRendererFactory;
+  readonly supportedRenderers: ReadonlySet<RendererType>;
   readonly createEnvironmentObserver?: ControllerEnvironmentObserverFactory;
 }
 
@@ -60,7 +63,7 @@ interface MutableAxisState {
 interface MutableBindingState {
   config: ControllerBindingConfig;
   resolution: TimelineResolution | null;
-  renderer: VideoRenderer | null;
+  renderer: MediaRenderer | null;
   media: VideoRendererState;
 }
 
@@ -94,7 +97,7 @@ const asPackageError = (
     ? error
     : new FrameByFrameError(code, message, { cause: error });
 
-class Controller implements FrameByFrameController {
+class Controller implements CanvasFrameByFrameController {
   readonly #program: ControllerProgram;
   #config: ControllerConfig;
   readonly #dependencies: ControllerDependencies;
@@ -127,8 +130,11 @@ class Controller implements FrameByFrameController {
   #prefersReducedMotion = false;
   #hidden = false;
 
-  constructor(options: FrameByFrameOptions, dependencies: ControllerDependencies) {
-    this.#program = compileControllerProgram(options);
+  constructor(
+    options: FrameByFrameOptions | CanvasFrameByFrameOptions,
+    dependencies: ControllerDependencies,
+  ) {
+    this.#program = compileControllerProgram(options, dependencies.supportedRenderers);
     this.#config = this.#program.base;
     this.#dependencies = dependencies;
     this.#events = new EventEmitter(dependencies.reportAsyncError);
@@ -199,6 +205,10 @@ class Controller implements FrameByFrameController {
     }
 
     try {
+      for (const binding of this.#bindings.values()) {
+        binding.renderer?.resize();
+      }
+
       this.#applySnapshot(this.#scheduler.refresh(), this.#enabled);
       this.#emitUpdate('refresh');
     } catch (error) {
@@ -272,7 +282,7 @@ class Controller implements FrameByFrameController {
     }
   }
 
-  getTarget(bindingId: string): HTMLVideoElement | null {
+  getTarget(bindingId: string): HTMLVideoElement | HTMLCanvasElement | null {
     this.#assertNotDestroyed();
     const binding = this.#getBinding(bindingId);
     return binding.renderer?.getTarget() ?? null;
@@ -298,7 +308,7 @@ class Controller implements FrameByFrameController {
         id,
         axis: binding.config.axis,
         resolution: binding.resolution === null ? null : cloneResolution(binding.resolution),
-        renderer: 'video',
+        renderer: binding.config.renderer,
         loadState: media.loadState,
         loadProgress: Object.freeze(
           Object.fromEntries(
@@ -424,7 +434,7 @@ class Controller implements FrameByFrameController {
     environment.observeTargets(
       [...this.#bindings.values()]
         .map((binding) => binding.renderer?.getTarget() ?? null)
-        .filter((target): target is HTMLVideoElement => target !== null),
+        .filter((target): target is HTMLVideoElement | HTMLCanvasElement => target !== null),
     );
 
     const state = this.getState();
@@ -504,7 +514,7 @@ class Controller implements FrameByFrameController {
   #createRenderers(): void {
     try {
       for (const binding of this.#bindings.values()) {
-        const renderer = this.#dependencies.createVideoRenderer(
+        const renderer = this.#dependencies.createRenderer(
           binding.config,
           (event): void => {
             this.#handleRendererEvent(binding.config.id, event);
@@ -735,6 +745,10 @@ class Controller implements FrameByFrameController {
     }
 
     try {
+      for (const binding of this.#bindings.values()) {
+        binding.renderer?.resize();
+      }
+
       this.#applySnapshot(this.#scheduler.refresh(), this.#enabled);
       this.#emitUpdate('resize');
     } catch (error) {
@@ -813,7 +827,7 @@ class Controller implements FrameByFrameController {
     return binding;
   }
 
-  #getMountedRenderer(binding: MutableBindingState): VideoRenderer {
+  #getMountedRenderer(binding: MutableBindingState): MediaRenderer {
     const renderer = binding.renderer;
 
     if (renderer === null) {
@@ -900,6 +914,6 @@ class Controller implements FrameByFrameController {
 
 /** Internal factory with injectable browser dependencies for deterministic tests. */
 export const createController = (
-  options: FrameByFrameOptions,
+  options: FrameByFrameOptions | CanvasFrameByFrameOptions,
   dependencies: ControllerDependencies,
-): FrameByFrameController => new Controller(options, dependencies);
+): CanvasFrameByFrameController => new Controller(options, dependencies);

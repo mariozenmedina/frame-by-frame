@@ -1,6 +1,6 @@
 # Scroll controller API
 
-`createFrameByFrame()` connects browser scroll coordinates to deterministic video timelines. It owns source observation, animation-frame scheduling, native video targets, media lifecycle, state, and events.
+`createFrameByFrame()` connects browser scroll coordinates to deterministic video timelines. It owns source observation, animation-frame scheduling, media targets, renderer lifecycle, state, and events.
 
 > [!IMPORTANT]
 > The npm package has not been released yet. This document describes the contract implemented in the repository.
@@ -104,6 +104,8 @@ At least one axis must contain a binding. Binding IDs must be non-empty and uniq
 
 Pure configuration and timelines are validated and compiled by `createFrameByFrame()`. The source itself is resolved later by `mount()`.
 
+The root `@frame-by-frame/core` factory intentionally accepts native-video bindings only. The opt-in `@frame-by-frame/core/canvas` entry exports a compatible factory whose axes may combine video and canvas bindings. See the [2D canvas renderer guide](canvas.md) for its discriminated binding types and runtime behavior.
+
 ## Responsive overrides
 
 Each breakpoint requires a stable `id`, a CSS media `query`, and an `override`. Queries are created only by `mount()`, keeping package import and controller creation SSR-safe.
@@ -131,9 +133,9 @@ breakpoints: [
 ];
 ```
 
-Every matching breakpoint is applied in declaration order, so later entries win. Overrides may only reference existing axes and binding IDs. `segments` and `clips` replace their complete arrays; `frame`, `loading`, `video`, and `seek` are shallowly merged. Setting an axis to `false` disables it, while a later `{ enabled: true }` re-enables it.
+Every matching breakpoint is applied in declaration order, so later entries win. Overrides may only reference existing axes and binding IDs. `segments` and `clips` replace their complete arrays; `frame`, `loading`, `video`, `seek`, and canvas presentation options are shallowly merged. Setting an axis to `false` disables it, while a later `{ enabled: true }` re-enables it.
 
-Responsive overrides cannot replace the controller source, binding IDs, axes, renderer type, `target`, or `mountTo`. The complete candidate is recompiled before activation. If the cascade is invalid—for example, replacement segments refer to a clip no longer present—the controller keeps its last valid configuration, remains mounted, stores and emits `INVALID_BREAKPOINT_CONFIG`, and does not emit `breakpointchange`.
+Responsive overrides cannot replace the controller source, binding IDs, axes, renderer type, `target`, `mountTo`, or a canvas decoder target. The complete candidate is recompiled before activation. If the cascade is invalid—for example, replacement segments refer to a clip no longer present—the controller keeps its last valid configuration, remains mounted, stores and emits `INVALID_BREAKPOINT_CONFIG`, and does not emit `breakpointchange`.
 
 Mounted renderers and claimed targets are reused. A media change supersedes obsolete readiness work; a pending `whenReady()` follows the latest committed configuration.
 
@@ -177,19 +179,19 @@ When the final subscriber disables or destroys itself, the listener is removed a
 
 ## Lifecycle
 
-| Method          | Behavior                                                                                                                                                                                                                                                |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mount()`       | Resolves the source and all video targets, refreshes metrics, starts configured automatic media work without waiting for it, subscribes if enabled, and emits `mount` then `update`. Concurrent calls share one promise; a failed mount may be retried. |
-| `refresh()`     | Recalculates maximum ranges and synchronizes current positions. It requires a successful mount, including while disabled.                                                                                                                               |
-| `disable()`     | Stops this controller's scroll updates without unloading media or destroying its configuration. It may be called before mount.                                                                                                                          |
-| `enable()`      | Resynchronizes a mounted disabled controller and subscribes it again.                                                                                                                                                                                   |
-| `load(id?)`     | Enables loading and resolves after `loadedmetadata` for one binding or all bindings. Calling it after `unload()` reloads the latest resolved clip.                                                                                                      |
-| `whenReady()`   | Resolves with the latest state after all currently required automatic media work is ready. Untriggered on-demand work and `preload: 'none'` do not block it.                                                                                            |
-| `unload(id?)`   | Cancels pending media work, clears native sources, and prevents implicit reload until `load()` is called.                                                                                                                                               |
-| `getTarget(id)` | Returns the mounted `HTMLVideoElement`, or `null` before mount.                                                                                                                                                                                         |
-| `getState()`    | Returns a detached read-only snapshot and remains available after destruction.                                                                                                                                                                          |
-| `on()`          | Adds a typed event listener and returns an idempotent unsubscribe function.                                                                                                                                                                             |
-| `destroy()`     | Unsubscribes, cancels pending source/seek/frame work, restores supplied targets, removes created targets, releases ownership, emits `destroy`, and removes listeners. It is synchronous and idempotent.                                                 |
+| Method          | Behavior                                                                                                                                                                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mount()`       | Resolves the source and all renderer targets, refreshes metrics, starts configured automatic media work without waiting for it, subscribes if enabled, and emits `mount` then `update`. Concurrent calls share one promise; a failed mount may be retried. |
+| `refresh()`     | Recalculates maximum ranges, resizes renderer bitmaps where applicable, and synchronizes current positions. It requires a successful mount, including while disabled.                                                                                      |
+| `disable()`     | Stops this controller's scroll updates without unloading media or destroying its configuration. It may be called before mount.                                                                                                                             |
+| `enable()`      | Resynchronizes a mounted disabled controller and subscribes it again.                                                                                                                                                                                      |
+| `load(id?)`     | Enables loading and resolves after `loadedmetadata` for one binding or all bindings. Calling it after `unload()` reloads the latest resolved clip.                                                                                                         |
+| `whenReady()`   | Resolves with the latest state after all currently required automatic media work is ready. Untriggered on-demand work and `preload: 'none'` do not block it.                                                                                               |
+| `unload(id?)`   | Cancels pending media work, clears native sources, and prevents implicit reload until `load()` is called.                                                                                                                                                  |
+| `getTarget(id)` | Returns the mounted visible element, or `null` before mount. Root controllers return video; canvas-enabled controllers return `HTMLVideoElement                                                                                                            | HTMLCanvasElement`. |
+| `getState()`    | Returns a detached read-only snapshot and remains available after destruction.                                                                                                                                                                             |
+| `on()`          | Adds a typed event listener and returns an idempotent unsubscribe function.                                                                                                                                                                                |
+| `destroy()`     | Unsubscribes, cancels pending source/seek/frame work, restores supplied targets, removes created targets, releases ownership, emits `destroy`, and removes listeners. It is synchronous and idempotent.                                                    |
 
 The status is one of `idle`, `mounting`, `ready`, `disabled`, `error`, or `destroyed`. After destruction, every operation except `getState()` and repeated `destroy()` throws `CONTROLLER_DESTROYED`.
 
@@ -208,7 +210,7 @@ interface FrameByFrameState {
 }
 ```
 
-Axis state contains `enabled`, `offset`, `max`, and `progress`. Binding state contains its `id`, axis, `TimelineResolution | null`, renderer type, load state, full-preload progress by clip ID, active clip and source, known duration, applied and presented times, seeking flag, and binding-scoped media error. Snapshots and their collections are detached from controller internals.
+Axis state contains `enabled`, `offset`, `max`, and `progress`. Binding state contains its `id`, axis, `TimelineResolution | null`, renderer type (`video` or `canvas`), load state, full-preload progress by clip ID, active clip and source, known duration, applied and presented times, seeking flag, and binding-scoped media error. For canvas, presented time is published only after a successful draw. Snapshots and their collections are detached from controller internals.
 
 `activeBreakpoints` lists the successfully committed matching IDs in declaration order. `prefersReducedMotion` reports the current media preference independently from the configured behavior. Media failures are stored on the affected binding. They emit `error` but do not change the controller status or `lastError`; source and mapping failures do. A rejected responsive transition stores `lastError` while preserving the mounted status and last valid configuration.
 
@@ -243,15 +245,18 @@ The controller adds these stable `FrameByFrameError` codes:
 | `SOURCE_NOT_FOUND`            | A source is invalid, missing, or its resolver failed.                                 |
 | `INVALID_LIFECYCLE_OPERATION` | An operation such as `refresh()` was called before a successful mount.                |
 | `CONTROLLER_DESTROYED`        | An operation was attempted after destruction or a pending mount was invalidated.      |
-| `INVALID_MEDIA_CONFIG`        | A target, clip, source, video option, or seek option is invalid.                      |
+| `INVALID_MEDIA_CONFIG`        | A target, clip, source, renderer option, or seek option is invalid.                   |
 | `TARGET_NOT_FOUND`            | A target/container selector or resolver did not produce an element.                   |
-| `INVALID_TARGET_TYPE`         | The resolved element is not a video or valid mount container.                         |
-| `TARGET_CONFLICT`             | Another mounted binding already owns the same video target.                           |
+| `INVALID_TARGET_TYPE`         | A resolved video, canvas, decoder, or mount container has the wrong element type.     |
+| `TARGET_CONFLICT`             | Another mounted binding already owns the same visible target or decoder.              |
 | `MEDIA_SOURCE_UNSUPPORTED`    | No candidate source can be used for the selected clip.                                |
 | `MEDIA_LOAD_FAILED`           | All candidates failed while loading.                                                  |
 | `FULL_PRELOAD_FAILED`         | Every playable source failed during explicit full-file fetch or object-URL setup.     |
 | `MEDIA_DECODE_FAILED`         | The native decoder rejected the selected media.                                       |
 | `MEDIA_SEEK_FAILED`           | The native video target rejected a precise `currentTime` assignment.                  |
+| `CANVAS_CONTEXT_UNAVAILABLE`  | A canvas binding could not obtain a 2D rendering context.                             |
+| `CANVAS_DRAW_FAILED`          | The decoder frame could not be copied to the visible canvas.                          |
+| `CANVAS_SECURITY_ERROR`       | The browser rejected canvas drawing because of a security restriction.                |
 
 Timeline errors may also occur while controller bindings are resolved. A runtime mapping error moves the controller to `error`, unsubscribes it from scroll updates, stores `lastError`, and emits `error`.
 

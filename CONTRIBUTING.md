@@ -104,6 +104,8 @@ Keep each pull request small enough to review. Complete the template, link its i
 
 Maintainers may request changes, ask for a proposal to be split, or decline work outside the project scope. Significant decisions include a public rationale under the [governance model](GOVERNANCE.md).
 
+Contributors do not need to edit `CHANGELOG.md` or carry release-tool metadata in each pull request. Maintainers curate user-facing entries during a focused release change. Package versions, signed tags, npm publication, and GitHub Releases follow the [release maintainer guide](docs/guides/releasing.md).
+
 ## Licensing contributions
 
 This project uses the MIT License. By submitting a contribution, you agree that it may be distributed under the same license. The project does not currently require a Contributor License Agreement or Developer Certificate of Origin sign-off.

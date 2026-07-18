@@ -6,5 +6,6 @@ Guides cover operational decisions around a `frame-by-frame` integration.
 - [Performance](performance.md)
 - [Accessibility](accessibility.md)
 - [Browser support and manual validation](browser-support.md)
+- [Release maintainer guide](releasing.md)
 
 For copyable integration patterns, use the [recipes](../recipes/README.md). For exact behavior, use the [API reference](../api/controller.md).

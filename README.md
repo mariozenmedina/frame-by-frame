@@ -98,7 +98,7 @@ pnpm install
 pnpm check
 ```
 
-The required gate covers formatting, documentation links, linting, TypeScript, deterministic tests and coverage, builds, bundle budgets, package metadata, declarations, and built entry imports. Browser behavior is validated separately by an operator because codecs and media presentation vary by runtime.
+The required gate covers formatting, documentation links, linting, TypeScript, deterministic tests and coverage, builds, bundle budgets, package metadata, declarations, and built entry imports. The prepared [browser validation suite](docs/guides/browser-support.md) is run separately by an operator because codecs and media presentation vary by runtime.
 
 ## Contributing
 

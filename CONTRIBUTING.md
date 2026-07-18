@@ -72,6 +72,8 @@ pnpm check
 
 Formatting fixes may be applied with `pnpm format`. Browser validation is an explicit operator task; contributors should document manual environments and results when a change depends on real media behavior.
 
+The prepared browser suite is intentionally outside `pnpm check` and CI. Only the operator installs browser binaries and runs `pnpm test:browser`; see the [browser validation runbook](docs/guides/browser-support.md). Contributors may use Node gates to type-check and lint browser-suite changes, but must not report those gates as browser results.
+
 ## Tests and compatibility
 
 Every implementation pull request should:

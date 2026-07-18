@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frame-by-frame browser fixture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+      }
+
+      video,
+      canvas {
+        width: 200px;
+        height: 120px;
+        background: #111;
+        border: 1px solid #666;
+      }
+
+      #document-stage {
+        min-height: 1600px;
+        padding: 24px;
+      }
+
+      #custom-scroller {
+        width: 480px;
+        height: 280px;
+        overflow: auto;
+        border: 2px solid #333;
+      }
+
+      #custom-content {
+        position: relative;
+        width: 1800px;
+        height: 1600px;
+      }
+
+      #custom-content video,
+      #custom-content canvas {
+        position: absolute;
+      }
+
+      #custom-x-video {
+        inset: 20px auto auto 20px;
+      }
+
+      #custom-y-video {
+        inset: 20px auto auto 260px;
+      }
+
+      #loading-video {
+        inset: 180px auto auto 20px;
+      }
+
+      #responsive-video {
+        inset: 180px auto auto 260px;
+      }
+
+      #canvas-target {
+        inset: 340px auto auto 20px;
+      }
+
+      #viewport-stage {
+        margin-top: 1400px;
+        min-height: 500px;
+        padding: 24px;
+      }
+
+      #document-video,
+      #reduced-video {
+        position: fixed;
+        right: 24px;
+        z-index: 1;
+      }
+
+      #document-video {
+        top: 24px;
+      }
+
+      #reduced-video {
+        top: 168px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section id="document-stage">
+        <h1>frame-by-frame browser fixture</h1>
+        <video id="document-video" muted playsinline></video>
+        <video id="reduced-video" muted playsinline></video>
+        <div id="custom-scroller">
+          <div id="custom-content">
+            <video id="custom-x-video" muted playsinline></video>
+            <video id="custom-y-video" muted playsinline></video>
+            <video id="loading-video" muted playsinline></video>
+            <video id="responsive-video" muted playsinline></video>
+            <canvas id="canvas-target"></canvas>
+          </div>
+        </div>
+      </section>
+      <section id="viewport-stage">
+        <h2>Viewport loading target</h2>
+        <video id="viewport-video" muted playsinline></video>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -13,6 +13,8 @@ The repository includes Playwright Test pinned to `1.61.1` and defines Chromium,
 
 `pnpm test:browser` is the single complete operator command. It builds first and then executes portable scenarios across all projects with one worker. Browser binaries, results, traces, screenshots, and HTML reports remain operator-owned.
 
+Media presentation is platform-qualified following Playwright's own boundary: WebKit on Windows skips only five cases that require native seeking/presentation, video-to-canvas pixels, or object-URL playback. Those cases remain enabled on macOS, which Playwright recommends for video playback closest to Safari. The other nine WebKit cases continue to run on Windows. A Windows result with annotated skips is partial evidence; the full WebKit project must pass on macOS from the same commit before the automated matrix is complete.
+
 The browser command is excluded from `pnpm check`, GitHub Actions, and required checks. Agents may author and statically validate the suite but must never install browser binaries, launch Playwright browsers, or infer results. The public result record starts as `Not run` and changes only from operator evidence.
 
 Hidden-document behavior and production hosting/encoding remain manual supplements because the repository suite cannot portably force every engine's real background lifecycle or represent every consumer asset.
@@ -22,5 +24,6 @@ Hidden-document behavior and production hosting/encoding remain manual supplemen
 - The release boundary distinguishes deterministic Node evidence from observed browser evidence.
 - Contributors can reproduce browser scenarios locally without relying on an external application or media host.
 - Pull requests remain fast and do not silently expand required CI infrastructure.
-- Browser compatibility stays visibly unconfirmed until the operator records all three projects and manual supplements.
+- Browser compatibility stays visibly unconfirmed until the operator records full Chromium and Firefox passes, a full WebKit/macOS pass, and the manual supplements.
+- Windows remains useful for partial WebKit evidence without presenting limitations of its bundled media backend as package regressions.
 - A future support matrix may use these results, but one fixture set cannot guarantee arbitrary codecs, devices, CORS policies, or media servers.

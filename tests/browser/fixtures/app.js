@@ -88,8 +88,11 @@ const primaryClip = ({ preload = 'metadata', slow = false } = {}) => {
     preload,
     sources: [
       { src: '/tests/browser/fixtures/media/unsupported.bin', type: 'video/x-invalid' },
-      { src: `${mediaDirectory}/primary.webm${query}`, type: 'video/webm' },
-      { src: `${mediaDirectory}/primary.mp4${query}`, type: 'video/mp4' },
+      {
+        src: `${mediaDirectory}/primary.mp4${query}`,
+        type: 'video/mp4; codecs="avc1.42C00A"',
+      },
+      { src: `${mediaDirectory}/primary.webm${query}`, type: 'video/webm; codecs="vp8"' },
     ],
   };
 };
@@ -97,8 +100,8 @@ const primaryClip = ({ preload = 'metadata', slow = false } = {}) => {
 const accentClip = () => ({
   id: 'accent',
   sources: [
-    { src: `${mediaDirectory}/accent.webm`, type: 'video/webm' },
-    { src: `${mediaDirectory}/accent.mp4`, type: 'video/mp4' },
+    { src: `${mediaDirectory}/accent.mp4`, type: 'video/mp4; codecs="avc1.42C00A"' },
+    { src: `${mediaDirectory}/accent.webm`, type: 'video/webm; codecs="vp8"' },
   ],
 });
 

@@ -20,7 +20,9 @@ Node.js 22.18+ and 24.11+ are repository tooling environments, not browser runti
 
 Node-based tests cover deterministic mapping, configuration, scheduling, ownership, loading state, rendering decisions, public types, package entries, and error paths with structural browser fakes. They intentionally do not claim real codec, decoder, networking, layout, intersection, or composed-frame behavior.
 
-The Playwright suite uses the real built package, a local dependency-free server with byte-range support, and repository-owned WebM/MP4 fixtures. It runs the same portable scenarios in Chromium, Firefox, and WebKit. It is deliberately excluded from `pnpm check`, GitHub Actions, and required checks: browser installation and execution belong exclusively to the operator.
+The Playwright suite uses the real built package, a local dependency-free server with byte-range support, and repository-owned WebM/MP4 fixtures. It runs the portable scenarios in Chromium, Firefox, and WebKit, with explicit platform annotations where the bundled browser cannot provide equivalent media behavior. It is deliberately excluded from `pnpm check`, GitHub Actions, and required checks: browser installation and execution belong exclusively to the operator.
+
+[Playwright documents](https://playwright.dev/docs/browsers#webkit) substantial operating-system differences in media codecs and recommends WebKit on macOS for video playback closest to Safari. On Windows, the suite therefore skips only five WebKit cases that require native seeking and presentation, video-to-canvas pixels, or object-URL playback. The other nine WebKit cases still exercise metadata, loading policy, clip replacement, responsiveness, reduced motion, and lifecycle behavior. A Windows result with five skips is partial evidence and never completes the WebKit or Safari compatibility claim; a WebKit run on macOS remains required before version 1.
 
 No browser result is implied by linting, type checking, building, or collecting these files.
 
@@ -43,7 +45,14 @@ pnpm build
 pnpm exec playwright test --config playwright.config.ts --project=chromium
 ```
 
-Replace `chromium` with `firefox` or `webkit`. Do not treat a focused pass as completion of the three-browser matrix.
+Replace `chromium` with `firefox` or `webkit`. Do not treat a focused pass as completion of the three-browser matrix. On Windows, an expected complete local command reports 37 passes and five annotated WebKit skips; record it as partial evidence. Run the same commit with the WebKit project on macOS to exercise those five cases:
+
+```sh
+pnpm build
+pnpm exec playwright test --config playwright.config.ts --project=webkit
+```
+
+The automated matrix is complete only when the full Chromium and Firefox projects pass and the full WebKit project passes on macOS from the same commit.
 
 Record the commit, operating system, Playwright version, browser projects, command, results, and relevant artifact paths in [browser validation results](../browser-validation-results.md). Report a failure with the first package error, failed assertion, browser project, trace path, and sanitized console output.
 

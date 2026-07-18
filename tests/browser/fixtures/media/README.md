@@ -9,7 +9,7 @@ These four short, silent videos are original test fixtures generated for `frame-
 | `accent.webm`  | WebM with VP8       | `5c3ef9d1182b8e2b042d39b9ae3c93d24bc77f515249c4c5ddf0411edb1a6a57` |
 | `accent.mp4`   | MP4 with H.264      | `f7cbec2306006c3570be87ab0f04e8e331c33a248b07e6d5f550693781c4dd87` |
 
-Each file is 160×90, one second long at 12 frames per second, has no audio, and encodes every frame as a keyframe. The primary and accent patterns are visually distinct so tests can observe source changes; both contain motion so seeking can exercise different decoded frames. WebM is attempted first and MP4 is the ordered fallback.
+Each file is 160×90, one second long at 12 frames per second, has no audio, and encodes every frame as a keyframe. The primary and accent patterns are visually distinct so tests can observe source changes; both contain motion so seeking can exercise different decoded frames. Sources use codec-qualified MIME types: H.264 (`avc1.42C00A`) is attempted first and VP8 is the ordered fallback for browsers without H.264 support.
 
 Regenerate and verify all four files from the repository root with:
 

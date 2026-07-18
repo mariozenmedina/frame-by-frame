@@ -4,8 +4,10 @@ import {
   expectNoFixtureErrors,
   fixtureMetrics,
   fixtureState,
+  isWindowsWebKitMediaLimited,
   openFixture,
   setupScenario,
+  windowsWebKitMediaSkipReason,
 } from './helpers.js';
 
 test.beforeEach(async ({ page }) => {
@@ -92,7 +94,12 @@ test('switches clips and applies a reverse per-segment mapping', async ({ page }
   await expectNoFixtureErrors(page);
 });
 
-test('owns and revokes a full-preload object URL after readiness', async ({ page }) => {
+test('owns and revokes a full-preload object URL after readiness', async ({
+  browserName,
+  page,
+}) => {
+  test.skip(isWindowsWebKitMediaLimited(browserName), windowsWebKitMediaSkipReason);
+
   await setupScenario(page, 'full');
   const ready = await page.evaluate(() => window.frameByFrameFixture.ready());
 

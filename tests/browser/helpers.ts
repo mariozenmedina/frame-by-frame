@@ -5,6 +5,12 @@ import type { Page } from '@playwright/test';
 type BrowserScenario = Parameters<Window['frameByFrameFixture']['setup']>[0];
 const unexpectedPageErrors = new WeakMap<Page, string[]>();
 
+export const windowsWebKitMediaSkipReason =
+  'Playwright recommends macOS for WebKit video playback; Windows media presentation is recorded as partial evidence.';
+
+export const isWindowsWebKitMediaLimited = (browserName: string): boolean =>
+  process.platform === 'win32' && browserName === 'webkit';
+
 export const openFixture = async (page: Page): Promise<void> => {
   const errors: string[] = [];
   unexpectedPageErrors.set(page, errors);
@@ -15,7 +21,14 @@ export const openFixture = async (page: Page): Promise<void> => {
     }
   });
   await page.goto('/');
-  await page.waitForFunction(() => Object.hasOwn(window, 'frameByFrameFixture'));
+
+  if (errors.length > 0) {
+    throw new Error(`Browser fixture bootstrap failed:\n${errors.join('\n')}`);
+  }
+
+  await page.waitForFunction(() => Object.hasOwn(window, 'frameByFrameFixture'), undefined, {
+    timeout: 5_000,
+  });
 };
 
 export const setupScenario = (page: Page, scenario: BrowserScenario) =>

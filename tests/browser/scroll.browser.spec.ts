@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test';
 
-import { expectNoFixtureErrors, fixtureState, openFixture, setupScenario } from './helpers.js';
+import {
+  expectNoFixtureErrors,
+  fixtureState,
+  isWindowsWebKitMediaLimited,
+  openFixture,
+  setupScenario,
+  windowsWebKitMediaSkipReason,
+} from './helpers.js';
+
+test.skip(
+  ({ browserName }) => isWindowsWebKitMediaLimited(browserName),
+  windowsWebKitMediaSkipReason,
+);
 
 test.beforeEach(async ({ page }) => {
   await openFixture(page);

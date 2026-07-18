@@ -4,8 +4,10 @@ import {
   expectNoFixtureErrors,
   fixtureMetrics,
   fixtureState,
+  isWindowsWebKitMediaLimited,
   openFixture,
   setupScenario,
+  windowsWebKitMediaSkipReason,
 } from './helpers.js';
 
 test.beforeEach(async ({ page }) => {
@@ -58,7 +60,9 @@ test.describe('reduced motion', () => {
   });
 });
 
-test('draws and resizes the opt-in canvas renderer', async ({ page }) => {
+test('draws and resizes the opt-in canvas renderer', async ({ browserName, page }) => {
+  test.skip(isWindowsWebKitMediaLimited(browserName), windowsWebKitMediaSkipReason);
+
   await setupScenario(page, 'canvas');
   const ready = await page.evaluate(() => window.frameByFrameFixture.ready());
   expect(ready.bindings['canvas']?.renderer).toBe('canvas');
@@ -79,8 +83,15 @@ test('draws and resizes the opt-in canvas renderer', async ({ page }) => {
   });
   await page.evaluate(() => window.frameByFrameFixture.settle());
   await expect
-    .poll(async () => (await page.evaluate(() => window.frameByFrameFixture.canvas())).width)
-    .toBe(240);
+    .poll(async () => {
+      const resized = await page.evaluate(() => window.frameByFrameFixture.canvas());
+
+      return {
+        grew: resized.clientWidth > initial.clientWidth,
+        matchesClientWidth: resized.width === resized.clientWidth,
+      };
+    })
+    .toEqual({ grew: true, matchesClientWidth: true });
 
   await page.evaluate(() => window.frameByFrameFixture.destroy());
   await expectNoFixtureErrors(page);

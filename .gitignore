@@ -16,6 +16,8 @@ node_modules/
 # Build, test, and tooling output
 dist/
 coverage/
+playwright-report/
+test-results/
 .cache/
 .eslintcache
 *.tsbuildinfo

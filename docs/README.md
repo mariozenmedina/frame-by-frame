@@ -26,6 +26,7 @@ This directory is the public documentation map for `frame-by-frame`. The project
 - [Performance](guides/performance.md)
 - [Accessibility](guides/accessibility.md)
 - [Browser support and manual validation](guides/browser-support.md)
+- [Browser validation results](browser-validation-results.md)
 
 ## API reference
 
@@ -46,6 +47,7 @@ This directory is the public documentation map for `frame-by-frame`. The project
 - [ADR 0008: Version 1 contract hardening](decisions/0008-v1-contract-hardening.md)
 - [ADR 0009: Performance and supply-chain gates](decisions/0009-performance-and-supply-chain-gates.md)
 - [ADR 0010: Documentation architecture](decisions/0010-documentation-architecture.md)
+- [ADR 0011: Operator-only browser validation](decisions/0011-operator-browser-validation.md)
 
 ## Community
 

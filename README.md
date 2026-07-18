@@ -87,6 +87,7 @@ Start with the [documentation map](docs/README.md), then choose the path that ma
 - [API reference](docs/api/controller.md) for controller behavior, with dedicated [timeline](docs/api/timeline.md), [video](docs/api/video.md), and [canvas](docs/api/canvas.md) references.
 - [Troubleshooting](docs/troubleshooting.md) for common integration symptoms and stable error codes.
 - [Version 1 acceptance matrix](docs/v1-acceptance.md) for implemented, operator-pending, and release-pending evidence.
+- [Changelog](CHANGELOG.md) and the [release maintainer guide](docs/guides/releasing.md) for version history and the publication boundary.
 - [Architecture decisions](docs/decisions/0001-package-foundation.md) for the public design rationale.
 
 ## Development

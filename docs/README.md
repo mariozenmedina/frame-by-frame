@@ -6,6 +6,7 @@ This directory is the public documentation map for `frame-by-frame`. The project
 
 - **Integrating the package:** start with the [recipes](recipes/README.md).
 - **Preparing a production experience:** read the [guides](guides/README.md).
+- **Maintaining a release:** follow the [release maintainer guide](guides/releasing.md).
 - **Looking up exact behavior:** use the [API reference](#api-reference).
 - **Diagnosing a problem:** use [troubleshooting](troubleshooting.md).
 - **Evaluating v1 readiness:** see the [version 1 acceptance matrix](v1-acceptance.md).
@@ -27,6 +28,7 @@ This directory is the public documentation map for `frame-by-frame`. The project
 - [Accessibility](guides/accessibility.md)
 - [Browser support and manual validation](guides/browser-support.md)
 - [Browser validation results](browser-validation-results.md)
+- [Release maintainer guide](guides/releasing.md)
 
 ## API reference
 
@@ -48,6 +50,7 @@ This directory is the public documentation map for `frame-by-frame`. The project
 - [ADR 0009: Performance and supply-chain gates](decisions/0009-performance-and-supply-chain-gates.md)
 - [ADR 0010: Documentation architecture](decisions/0010-documentation-architecture.md)
 - [ADR 0011: Operator-only browser validation](decisions/0011-operator-browser-validation.md)
+- [ADR 0012: Version 1 release governance](decisions/0012-v1-release-governance.md)
 
 ## Community
 

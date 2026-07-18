@@ -1,13 +1,13 @@
 # Version 1 acceptance matrix
 
-This matrix tracks the 23 product criteria required before the first stable core release. It separates deterministic repository evidence from behavior that still needs the operator's real-browser run and from publication work reserved for the release stage.
+This matrix tracks the 23 product criteria required before the first stable core release. It separates deterministic repository evidence from browser behavior whose cross-platform matrix is not yet complete and from publication work reserved for the release stage.
 
 Use the [documentation map](README.md) for recipes, operational guides, API references, troubleshooting, and architecture decisions.
 
 Status meanings:
 
 - **Automated:** covered by the required Node-based repository gates.
-- **Operator pending:** deterministic coverage exists, but the real-browser suite prepared in Stage 8D must still pass.
+- **Operator pending:** deterministic coverage and a partial Windows browser result exist, but WebKit/macOS evidence is still required for the complete matrix.
 - **Release pending:** implementation and package validation exist, but completion depends on the Stage 9 release process.
 
 The project does not claim a stable v1 while any operator or release item remains pending.
@@ -40,4 +40,4 @@ The project does not claim a stable v1 while any operator or release item remain
 
 ## Release boundary
 
-Stage 8 closes the operator-pending evidence and audits this table. Stage 9 confirms supported versions, removes the private-package guard, produces the release artifacts, and changes criterion 1 to complete only after the package is actually published and installable.
+Stage 8 integrated the browser suite and recorded a passing Windows run with five platform-qualified WebKit skips. Issue #25 tracks the remaining WebKit/macOS evidence. Stage 9 may prepare release policy and a release candidate while that issue is open, but stable `1.0.0` remains gated. Criterion 1 becomes complete only after the stable package is published and independently installable.

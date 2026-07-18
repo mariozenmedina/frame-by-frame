@@ -1,0 +1,164 @@
+name: Stage npm package
+
+run-name: ${{ inputs.operation }} ${{ inputs.release_tag }} on npm tag ${{ inputs.npm_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing signed Git tag, for example v1.0.0-rc.1
+        required: true
+        type: string
+      npm_tag:
+        description: npm dist-tag for this version
+        required: true
+        default: next
+        type: choice
+        options:
+          - next
+          - latest
+      operation:
+        description: Bootstrap is allowed only for the first package; all later versions are staged
+        required: true
+        default: stage
+        type: choice
+        options:
+          - stage
+          - bootstrap
+
+permissions: {}
+
+concurrency:
+  group: npm-publication
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Validate ref and inputs
+        shell: bash
+        env:
+          NPM_TAG: ${{ inputs.npm_tag }}
+          OPERATION: ${{ inputs.operation }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF_TYPE" != "tag" || "$GITHUB_REF_NAME" != "$RELEASE_TAG" ]]; then
+            echo "dispatch ref and release_tag must identify the same Git tag" >&2
+            exit 1
+          fi
+
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "release-tag must be a v-prefixed Semantic Version without build metadata" >&2
+            exit 1
+          fi
+
+          if [[ "$OPERATION" == "bootstrap" && ( "$RELEASE_TAG" != "v1.0.0-rc.1" || "$NPM_TAG" != "next" ) ]]; then
+            echo "bootstrap is restricted to v1.0.0-rc.1 on the next dist-tag" >&2
+            exit 1
+          fi
+
+  publish:
+    name: Validate and ${{ inputs.operation }} package
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
+
+      - name: Verify signed tag and main ancestry
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin main:refs/remotes/origin/main --no-tags
+
+          if [[ "$(git cat-file -t "refs/tags/$RELEASE_TAG")" != "tag" ]]; then
+            echo "$RELEASE_TAG must be an annotated tag" >&2
+            exit 1
+          fi
+
+          TAG_COMMIT="$(git rev-list -n 1 "$RELEASE_TAG")"
+          test "$TAG_COMMIT" = "$(git rev-parse HEAD)"
+          test "$TAG_COMMIT" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$TAG_COMMIT" origin/main
+
+          TAG_OBJECT_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
+          TAG_OBJECT_TYPE="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.type')"
+
+          if [[ "$TAG_OBJECT_TYPE" != "tag" ]]; then
+            echo "$RELEASE_TAG must resolve to an annotated GitHub tag object" >&2
+            exit 1
+          fi
+
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA" --jq '.verification.verified')" != "true" ]]; then
+            echo "$RELEASE_TAG must have a signature verified by GitHub" >&2
+            exit 1
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.11.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the pinned npm release client
+        run: npm install --global --ignore-scripts npm@11.18.0
+
+      - name: Verify npm release client
+        shell: bash
+        run: test "$(npm --version)" = "11.18.0"
+
+      - name: Run repository quality gates
+        run: pnpm check
+
+      - name: Validate publishable release contract
+        env:
+          NPM_TAG: ${{ inputs.npm_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: node scripts/check-release.mjs --publishable --tag "$RELEASE_TAG" --channel "$NPM_TAG"
+
+      - name: Inspect package archive
+        run: pnpm pack --dry-run
+
+      - name: Stage package with trusted publishing
+        if: inputs.operation == 'stage'
+        env:
+          NPM_TAG: ${{ inputs.npm_tag }}
+        run: npm stage publish --access public --tag "$NPM_TAG"
+
+      - name: Bootstrap first package with temporary token
+        if: inputs.operation == 'bootstrap'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+          NPM_TAG: ${{ inputs.npm_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          npm publish --access public --tag "$NPM_TAG" --provenance

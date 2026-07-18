@@ -67,9 +67,10 @@
   "scripts": {
     "build": "tsdown",
     "build:watch": "tsdown --watch",
-    "check": "pnpm format:check && pnpm check:docs && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build && pnpm check:bundle && pnpm test:package",
+    "check": "pnpm format:check && pnpm check:docs && pnpm check:release && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build && pnpm check:bundle && pnpm test:package",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
     "check:docs": "node scripts/check-doc-links.mjs",
+    "check:release": "node scripts/check-release.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:browser-media": "node scripts/generate-browser-media.mjs",

@@ -1,6 +1,6 @@
 {
   "name": "@frame-by-frame/core",
-  "version": "0.0.0",
+  "version": "1.0.0-rc.1",
   "description": "Framework-agnostic TypeScript library for mapping scroll position to video time.",
   "keywords": [
     "animation",
@@ -22,7 +22,6 @@
   "license": "MIT",
   "author": "Mário Veronesi Medina",
   "type": "module",
-  "private": true,
   "sideEffects": false,
   "files": [
     "dist"

@@ -117,8 +117,11 @@ export const validateReleaseContract = ({
       `^## \\[${escapeRegex(version)}\\] - \\d{4}-\\d{2}-\\d{2}$`,
       'mu',
     );
+    const releaseHeadingPlaceholder = `## [${version}] - YYYY-MM-DD`;
 
-    if (!releaseHeadingPattern.test(changelog)) {
+    if (changelog.includes(releaseHeadingPlaceholder)) {
+      failures.push(`CHANGELOG.md must replace the ${version} publication-date placeholder`);
+    } else if (!releaseHeadingPattern.test(changelog)) {
       failures.push(`CHANGELOG.md must contain a dated ${version} release heading`);
     }
   }
@@ -155,7 +158,7 @@ if (isCommand) {
     throw new Error(`Release contract check failed:\n- ${failures.join('\n- ')}`);
   }
 
-  const state = values.publishable ? 'publishable release' : 'private preparation';
+  const state = values.publishable ? 'publishable release' : 'repository metadata';
   stdout.write(
     `Release contract valid for ${state}: ${packageJson.name}@${packageJson.version}.\n`,
   );

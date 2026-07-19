@@ -6,7 +6,7 @@
 A framework-agnostic TypeScript engine for mapping scroll position to video time.
 
 > [!IMPORTANT]
-> `frame-by-frame` is unreleased and not ready for production use. The package remains private at version `0.0.0` while browser validation and release automation are completed.
+> `frame-by-frame` `1.0.0-rc.1` is a release candidate for integration feedback, not a stable production release. Compatibility evidence remains qualified by the tested browsers, operating systems, codecs, and media environments.
 
 ## Why frame-by-frame?
 
@@ -24,7 +24,15 @@ Native scrolling is never intercepted. The engine coalesces scroll work with ani
 
 ## Quick start
 
-The planned package name is `@frame-by-frame/core`. This import demonstrates the intended package contract; it is not available from npm yet.
+Install the release-candidate channel with one package manager:
+
+```sh
+pnpm add @frame-by-frame/core@next
+# or
+npm install @frame-by-frame/core@next
+```
+
+The root entry is the recommended video-only API:
 
 ```ts
 import { createFrameByFrame } from '@frame-by-frame/core';
@@ -88,6 +96,7 @@ Start with the [documentation map](docs/README.md), then choose the path that ma
 - [Troubleshooting](docs/troubleshooting.md) for common integration symptoms and stable error codes.
 - [Version 1 acceptance matrix](docs/v1-acceptance.md) for implemented, operator-pending, and release-pending evidence.
 - [Changelog](CHANGELOG.md) and the [release maintainer guide](docs/guides/releasing.md) for version history and the publication boundary.
+- [Release candidate notes](docs/releases/v1.0.0-rc.1.md) for installation, compatibility evidence, and known limitations in `1.0.0-rc.1`.
 - [Architecture decisions](docs/decisions/0001-package-foundation.md) for the public design rationale.
 
 ## Development

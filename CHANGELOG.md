@@ -6,6 +6,12 @@ The project follows [Semantic Versioning](https://semver.org/). Release entries 
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - YYYY-MM-DD
+
+> Draft release: replace `YYYY-MM-DD` with the actual publication date before merging, tagging, or publishing this candidate.
+
+The first public release candidate freezes the intended version 1 core API for integration and packaging feedback. See the [candidate release notes](docs/releases/v1.0.0-rc.1.md) for installation, package entries, compatibility evidence, and known limitations.
+
 ### Added
 
 - Deterministic pixel and normalized-progress timelines with forward, reverse, multi-clip, and global or per-segment easing.
@@ -25,4 +31,11 @@ The project follows [Semantic Versioning](https://semver.org/). Release entries 
 - Required Node.js 22 and 24 gates for formatting, documentation, linting, types, deterministic behavior, coverage, builds, package entries, bundle budgets, dependency review, and CodeQL.
 - An operator-only Chromium, Firefox, and WebKit validation suite with repository-owned media fixtures and platform-qualified result reporting.
 
-[Unreleased]: https://github.com/mariozenmedina/frame-by-frame/commits/main
+### Known limitations
+
+- Native media seeking and frame presentation remain subject to browser decoder, codec, asset-hosting, and device behavior; the package does not promise frame-exact presentation for every media pipeline.
+- Browser evidence is qualified by the exact tested platforms in the [validation record](docs/browser-validation-results.md), and the release candidate does not claim universal Safari or WebKit compatibility.
+- The package is ESM-only and requires an ESM-capable runtime or bundler.
+
+[Unreleased]: https://github.com/mariozenmedina/frame-by-frame/compare/v1.0.0-rc.1...HEAD
+[1.0.0-rc.1]: https://github.com/mariozenmedina/frame-by-frame/releases/tag/v1.0.0-rc.1

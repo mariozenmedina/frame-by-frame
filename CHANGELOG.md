@@ -6,9 +6,7 @@ The project follows [Semantic Versioning](https://semver.org/). Release entries 
 
 ## [Unreleased]
 
-## [1.0.0-rc.1] - YYYY-MM-DD
-
-> Draft release: replace `YYYY-MM-DD` with the actual publication date before merging, tagging, or publishing this candidate.
+## [1.0.0-rc.1] - 2026-07-20
 
 The first public release candidate freezes the intended version 1 core API for integration and packaging feedback. See the [candidate release notes](docs/releases/v1.0.0-rc.1.md) for installation, package entries, compatibility evidence, and known limitations.
 

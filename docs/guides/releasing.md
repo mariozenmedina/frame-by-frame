@@ -2,7 +2,7 @@
 
 This guide is for maintainers of `@frame-by-frame/core`. Contributors do not need npm credentials and cannot publish through a pull request. The accepted policy and rationale live in [ADR 0012](../decisions/0012-v1-release-governance.md).
 
-The repository is preparing `1.0.0-rc.1` through a draft version pull request. That branch may remove the private guard and use `YYYY-MM-DD` as an explicit changelog placeholder for review, but it must not merge, receive a tag, or enter the publication workflow until the real publication date and bootstrap are separately authorized. Publishable validation rejects the placeholder.
+Version `1.0.0-rc.1` is prepared through a focused version pull request. The pull request must set the exact version and publication date, remove the private guard, pass publishable validation, and receive explicit authorization before merge. Tagging and publication remain separate post-merge gates.
 
 ## Version and channel policy
 

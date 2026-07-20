@@ -1,12 +1,13 @@
 # Documentation
 
-This directory is the public documentation map for `frame-by-frame`. The project is unreleased; examples describe the intended package contract while browser validation and release work remain pending.
+This directory is the public documentation map for `frame-by-frame`. Version `1.0.0-rc.1` is the first release candidate for the frozen v1 core API; it invites integration feedback and is not the stable `1.0.0` release.
 
 ## Choose a path
 
 - **Integrating the package:** start with the [recipes](recipes/README.md).
 - **Preparing a production experience:** read the [guides](guides/README.md).
 - **Maintaining a release:** follow the [release maintainer guide](guides/releasing.md).
+- **Evaluating the candidate:** read the [`1.0.0-rc.1` release notes](releases/v1.0.0-rc.1.md).
 - **Looking up exact behavior:** use the [API reference](#api-reference).
 - **Diagnosing a problem:** use [troubleshooting](troubleshooting.md).
 - **Evaluating v1 readiness:** see the [version 1 acceptance matrix](v1-acceptance.md).

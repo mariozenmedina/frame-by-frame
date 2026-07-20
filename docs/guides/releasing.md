@@ -2,7 +2,7 @@
 
 This guide is for maintainers of `@frame-by-frame/core`. Contributors do not need npm credentials and cannot publish through a pull request. The accepted policy and rationale live in [ADR 0012](../decisions/0012-v1-release-governance.md).
 
-The repository is currently in release-process preparation. `package.json` intentionally remains private at `0.0.0`, so the prepared workflow cannot publish it.
+Version `1.0.0-rc.1` is prepared through a focused version pull request. The pull request must set the exact version and publication date, remove the private guard, pass publishable validation, and receive explicit authorization before merge. Tagging and publication remain separate post-merge gates.
 
 ## Version and channel policy
 
@@ -48,7 +48,12 @@ Replace the version for later releases. Confirm GitHub shows the tag signature a
 
 npm trusted publishing and staged publishing require an existing registry package. The first release candidate therefore uses a one-time bootstrap:
 
-1. Create a granular npm token limited to the `frame-by-frame` organization, with the minimum publication access and 2FA bypass needed for non-interactive GitHub Actions.
+1. Create a short-lived granular npm token with these exact boundaries:
+   - name it `frame-by-frame-rc1-bootstrap`;
+   - enable **Bypass 2FA** for the non-interactive GitHub Actions publish;
+   - under **Packages and scopes**, grant **Read and write** to only the `@frame-by-frame` scope;
+   - leave **Organizations** at **No access**, because organization permissions manage organization settings and do not grant package publication rights;
+   - use the minimum available expiration of one day and do not add an IP range, because GitHub-hosted runner addresses are not fixed for this workflow.
 2. Add it temporarily as `NPM_BOOTSTRAP_TOKEN` in the protected GitHub `npm` environment. Never place it in repository, issue, pull-request, command output, or artifact content.
 3. Dispatch **Stage npm package** against the signed tag. The ref and input must be identical so the workflow identity, checkout, and provenance resolve to one commit:
 

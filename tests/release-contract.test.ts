@@ -89,6 +89,24 @@ describe('release contract validation', () => {
     ]);
   });
 
+  it('rejects a release-candidate publication-date placeholder', () => {
+    const failures = validateReleaseContract({
+      packageJson: {
+        ...basePackage(),
+        version: '1.0.0-rc.1',
+        private: false,
+      },
+      changelog: `${unreleasedChangelog}\n## [1.0.0-rc.1] - YYYY-MM-DD\n`,
+      publishable: true,
+      tag: 'v1.0.0-rc.1',
+      channel: 'next',
+    });
+
+    expect(failures).toEqual([
+      'CHANGELOG.md must replace the 1.0.0-rc.1 publication-date placeholder',
+    ]);
+  });
+
   it('requires stable releases to use latest and rejects the 0.x line', () => {
     const failures = validateReleaseContract({
       packageJson: {

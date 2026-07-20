@@ -3,7 +3,7 @@
 `createTimeline()` builds a deterministic, DOM-independent mapping from scroll coordinates to media clip IDs and times. It is safe to create and resolve a timeline in SSR or other non-browser environments.
 
 > [!IMPORTANT]
-> The npm package has not been released yet. This document describes the contract implemented in the repository.
+> This document describes the `1.0.0-rc.1` contract. The v1 surface is frozen for candidate feedback, but corrections found before stable `1.0.0` will be documented explicitly.
 
 ## Example
 

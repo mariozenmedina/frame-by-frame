@@ -3,7 +3,7 @@
 `createFrameByFrame()` connects browser scroll coordinates to deterministic video timelines. It owns source observation, animation-frame scheduling, media targets, renderer lifecycle, state, and events.
 
 > [!IMPORTANT]
-> The npm package has not been released yet. This document describes the contract implemented in the repository.
+> This document describes the `1.0.0-rc.1` contract. The v1 surface is frozen for candidate feedback, but corrections found before stable `1.0.0` will be documented explicitly.
 
 ## Example
 

@@ -9,4 +9,4 @@ Recipes show focused, framework-agnostic integration patterns. They favor the ro
 - [Responsive timelines and reduced motion](responsive-and-reduced-motion.md)
 - [SSR and framework lifecycle](framework-lifecycle.md)
 
-For exact field definitions and lifecycle guarantees, use the [API reference](../api/controller.md). The package has not been released to npm yet.
+Install the candidate with `pnpm add @frame-by-frame/core@next`. For exact field definitions and lifecycle guarantees, use the [API reference](../api/controller.md).

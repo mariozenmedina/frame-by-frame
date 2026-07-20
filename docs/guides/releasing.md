@@ -48,7 +48,12 @@ Replace the version for later releases. Confirm GitHub shows the tag signature a
 
 npm trusted publishing and staged publishing require an existing registry package. The first release candidate therefore uses a one-time bootstrap:
 
-1. Create a granular npm token limited to the `frame-by-frame` organization, with the minimum publication access and 2FA bypass needed for non-interactive GitHub Actions.
+1. Create a short-lived granular npm token with these exact boundaries:
+   - name it `frame-by-frame-rc1-bootstrap`;
+   - enable **Bypass 2FA** for the non-interactive GitHub Actions publish;
+   - under **Packages and scopes**, grant **Read and write** to only the `@frame-by-frame` scope;
+   - leave **Organizations** at **No access**, because organization permissions manage organization settings and do not grant package publication rights;
+   - use the minimum available expiration of one day and do not add an IP range, because GitHub-hosted runner addresses are not fixed for this workflow.
 2. Add it temporarily as `NPM_BOOTSTRAP_TOKEN` in the protected GitHub `npm` environment. Never place it in repository, issue, pull-request, command output, or artifact content.
 3. Dispatch **Stage npm package** against the signed tag. The ref and input must be identical so the workflow identity, checkout, and provenance resolve to one commit:
 

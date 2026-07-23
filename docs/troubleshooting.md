@@ -35,6 +35,21 @@ Full preload uses `fetch`; canvas copies decoded pixels. Configure the media ser
 
 Likely codes: `FULL_PRELOAD_FAILED`, `CANVAS_SECURITY_ERROR`, `CANVAS_DRAW_FAILED`.
 
+## Canvas frames stall or mobile startup becomes impractical
+
+- Start with `preload: 'metadata'` or `'auto'`; `full` owns encoded bytes but does not cache decoded
+  frames and can substantially increase mobile memory pressure.
+- Keep video dimensions and bitrate appropriate for the physical devices being targeted.
+- Try a numeric canvas `pixelRatio`, such as `1`, before using `'device'` on a large mobile canvas.
+- Confirm the media emits usable `loadeddata` and `seeked` transitions and that the page is not
+  creating its own permanent animation loop around the controller.
+- Record whether the visible canvas retains its previous frame while a replacement is pending. A
+  repeatable empty bitmap after a successful earlier frame should be reported with a minimal
+  reproduction.
+
+Full preload and scrolling through the entire experience are not decoded-frame caches. Browser
+decoders may discard decoded frames under memory pressure and decode them again for later seeks.
+
 ## The wrong clip or time is selected
 
 - `scroll` uses pixels by default; set `scrollUnit: 'progress'` for normalized coordinates.

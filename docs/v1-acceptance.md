@@ -7,7 +7,8 @@ Use the [documentation map](README.md) for recipes, operational guides, API refe
 Status meanings:
 
 - **Automated:** covered by the required Node-based repository gates.
-- **Operator pending:** deterministic coverage and a partial Windows browser result exist, but WebKit/macOS evidence is still required for the complete matrix.
+- **Operator pending:** deterministic coverage exists, but required platform, browser, or physical-device
+  evidence is not yet integrated or a reported regression still needs operator validation.
 - **Release pending:** implementation and package validation exist, but completion depends on the Stage 9 release process.
 
 The project does not claim a stable v1 while any operator or release item remains pending.
@@ -25,7 +26,7 @@ The project does not claim a stable v1 while any operator or release item remain
 | 9   | CSS media-query breakpoints merge predictably                 | Operator pending | Ordered atomic cascades are covered by [`tests/controller.test.ts`](../tests/controller.test.ts) and [`tests/environment-observer.test.ts`](../tests/environment-observer.test.ts); viewport replacement awaits [`tests/browser/responsive-canvas-lifecycle.browser.spec.ts`](../tests/browser/responsive-canvas-lifecycle.browser.spec.ts).                                                                                                                |
 | 10  | Breakpoints may replace sources and segments                  | Automated        | Transactional media replacement and invalid-cascade rollback are covered by [`tests/controller.test.ts`](../tests/controller.test.ts) and [`tests/video-renderer.test.ts`](../tests/video-renderer.test.ts).                                                                                                                                                                                                                                                |
 | 11  | Native video is the default renderer                          | Automated        | Root and explicit-video entry contracts are covered by [`tests/package-entries.test.ts`](../tests/package-entries.test.ts) and the type tests under [`tests/types`](../tests/types).                                                                                                                                                                                                                                                                        |
-| 12  | Video-backed canvas rendering is available                    | Operator pending | Layout, ownership, readiness, drawing, and error paths are covered by [`tests/canvas-layout.test.ts`](../tests/canvas-layout.test.ts), [`tests/canvas-target.test.ts`](../tests/canvas-target.test.ts), and [`tests/canvas-renderer.test.ts`](../tests/canvas-renderer.test.ts); decoded drawing awaits [`tests/browser/responsive-canvas-lifecycle.browser.spec.ts`](../tests/browser/responsive-canvas-lifecycle.browser.spec.ts).                        |
+| 12  | Video-backed canvas rendering is available                    | Operator pending | Layout, ownership, readiness, retained-frame replacement, bounded retry, drawing, and error paths are covered by [`tests/canvas-layout.test.ts`](../tests/canvas-layout.test.ts), [`tests/canvas-target.test.ts`](../tests/canvas-target.test.ts), and [`tests/canvas-renderer.test.ts`](../tests/canvas-renderer.test.ts); the rc.2 fix still requires Chrome desktop and Samsung M54 validation.                                                          |
 | 13  | Native preload hints are supported                            | Operator pending | Configuration and renderer state transitions are covered by [`tests/video-renderer.test.ts`](../tests/video-renderer.test.ts); real metadata and readiness await [`tests/browser/media.browser.spec.ts`](../tests/browser/media.browser.spec.ts), while buffering remains implementation-defined.                                                                                                                                                           |
 | 14  | Full-file preload through `Blob` is supported                 | Operator pending | Fetch sharing, progress, aborts, object URLs, and revocation are covered by [`tests/asset-cache.test.ts`](../tests/asset-cache.test.ts) and renderer tests; real fetch and object-URL scenarios await [`tests/browser/media.browser.spec.ts`](../tests/browser/media.browser.spec.ts).                                                                                                                                                                      |
 | 15  | Media can load on demand                                      | Operator pending | Manual, first-use, and viewport activation are covered by [`tests/video-renderer.test.ts`](../tests/video-renderer.test.ts); the real activation scenarios await [`tests/browser/media.browser.spec.ts`](../tests/browser/media.browser.spec.ts).                                                                                                                                                                                                           |
@@ -40,4 +41,15 @@ The project does not claim a stable v1 while any operator or release item remain
 
 ## Release boundary
 
-Stage 8 integrated the browser suite and recorded a passing Windows run with five platform-qualified WebKit skips. Issue #25 tracks the remaining WebKit/macOS evidence. Stage 9 may prepare release policy and a release candidate while that issue is open, but stable `1.0.0` remains gated. Criterion 1 becomes complete only after the stable package is published and independently installable.
+Stage 8 integrated the browser suite and recorded a passing Windows run with five
+platform-qualified WebKit skips. Issue
+[#25](https://github.com/mariozenmedina/frame-by-frame/issues/25) received a successful
+WebKit/macOS run, but its documentation contribution remains open.
+
+Stage 9 published `1.0.0-rc.1`. Consumer validation then found intermittent Chrome desktop frame
+stalls and repeated black canvas states on a Samsung M54 running Chrome; full preload was not
+practical on that device. Issue
+[#32](https://github.com/mariozenmedina/frame-by-frame/issues/32) therefore blocks stable `1.0.0`.
+The canvas retention and bounded-retry fix targets `1.0.0-rc.2`, which must be validated by the
+operator before publication. Criterion 1 becomes complete only after the stable package is
+published and independently installable.

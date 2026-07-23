@@ -6,6 +6,18 @@ The project follows [Semantic Versioning](https://semver.org/). Release entries 
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve the last successful canvas frame while a seek, media replacement, or responsive bitmap
+  resize is pending.
+- Avoid destructive visible-canvas clears, stage backing-resolution changes, and use only bounded,
+  lifecycle-owned animation-frame retries for pending presentation.
+
+### Documentation
+
+- Clarify that full preload owns encoded bytes rather than decoded frames and may be unsuitable for
+  memory-constrained mobile startup.
+
 ## [1.0.0-rc.1] - 2026-07-20
 
 The first public release candidate freezes the intended version 1 core API for integration and packaging feedback. See the [candidate release notes](docs/releases/v1.0.0-rc.1.md) for installation, package entries, compatibility evidence, and known limitations.

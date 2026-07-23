@@ -74,7 +74,9 @@ Supplied decoders use the same best-effort property and attribute restoration as
 
 ## Fit modes
 
-Every draw clears the bitmap and uses centered rectangles:
+Decoded frames use centered rectangles and do not destructively clear the visible bitmap before a
+replacement is drawable. A backing-resolution change is staged in a short-lived internal buffer so
+the previous bitmap survives until the resized replacement succeeds:
 
 | Mode      | Behavior                                                                 |
 | --------- | ------------------------------------------------------------------------ |
@@ -91,7 +93,11 @@ The application owns CSS layout. The renderer reads `clientWidth` and `clientHei
 
 `pixelRatio` accepts a finite positive number or `device`, which is the default. Device ratio produces a sharper bitmap but increases memory and copy work approximately with the number of pixels. A fixed value such as `1` is appropriate when predictable cost matters more than high-density output.
 
-Zero-sized targets defer drawing until a later resize or manual `refresh()`. A resize redraws the latest decoded frame without submitting another media seek. No canvas measurement or drawing occurs in the raw scroll event handler.
+Zero-sized targets defer drawing until a later resize or manual `refresh()`. A resize redraws the
+latest decoded frame without submitting another media seek. If decoding or a seek is still pending,
+the previous successful bitmap remains visible and its backing resolution is updated only when the
+replacement frame can be committed. No canvas measurement or drawing occurs in the raw scroll event
+handler.
 
 ## Loading and readiness
 
@@ -99,9 +105,17 @@ Canvas bindings reuse the native renderer's ordered sources, full-preload cache,
 
 A canvas needs decoded pixels rather than metadata alone. For an activated canvas clip, public `preload: 'metadata'` is therefore advanced internally to first-renderable-data readiness without implying a full-file download. `load()` preserves the controller-wide contract and resolves at metadata. `whenReady()` additionally waits for the first required successful canvas draw.
 
-`preload: 'none'` and on-demand work that has not been activated do not block `whenReady()`. Full preload still owns the complete fetched blob and may use substantial memory independently from the canvas bitmap and decoder buffers.
+`preload: 'none'` and on-demand work that has not been activated do not block `whenReady()`. Full
+preload owns complete encoded bytes, not a cache of decoded frames. It may hold a fetched blob,
+object URL, canvas buffers, and decoder buffers at the same time, so it can make startup or memory
+pressure worse on mobile hardware.
 
-The public `frame` event is emitted only after `drawImage()` succeeds. A seek or loaded-data event provides a deterministic fallback for detached decoders; `requestVideoFrameCallback()` improves timing when the browser exposes it but is never the only canvas draw signal.
+The public `frame` event is emitted only after the decoded frame is committed to the visible canvas.
+A seek or loaded-data event provides a deterministic fallback for detached decoders;
+`requestVideoFrameCallback()` improves timing when the browser exposes it but is never the only
+canvas draw signal. While a requested frame is pending, the renderer may use a small bounded set of
+coalesced `requestAnimationFrame()` retries. It cancels them on success or lifecycle changes and
+does not run a permanent animation loop while idle.
 
 ## Responsive behavior and preferences
 

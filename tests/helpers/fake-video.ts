@@ -21,6 +21,7 @@ export class FakeVideoElement {
   poster = '';
   crossOrigin: string | null = null;
   duration = Number.NaN;
+  readyState = 4;
   videoWidth = 1920;
   videoHeight = 1080;
   error: { readonly code: number } | null = null;
@@ -182,8 +183,31 @@ export class FakeMediaDocument {
   readonly selections = new Map<string, unknown>();
   readonly created: FakeVideoElement[] = [];
   readonly createdCanvases: FakeCanvasElement[] = [];
-  readonly defaultView = { devicePixelRatio: 2 };
+  readonly animationFrames = new Map<number, FrameRequestCallback>();
+  readonly cancelledAnimationFrames: number[] = [];
+  readonly defaultView = {
+    devicePixelRatio: 2,
+    requestAnimationFrame: (callback: FrameRequestCallback): number => {
+      const handle = this.#nextAnimationFrameHandle++;
+      this.animationFrames.set(handle, callback);
+      return handle;
+    },
+    cancelAnimationFrame: (handle: number): void => {
+      this.cancelledAnimationFrames.push(handle);
+      this.animationFrames.delete(handle);
+    },
+  };
   selectorError: Error | null = null;
+  #nextAnimationFrameHandle = 1;
+
+  flushAnimationFrames(timestamp = 0): void {
+    const callbacks = [...this.animationFrames.values()];
+    this.animationFrames.clear();
+
+    for (const callback of callbacks) {
+      callback(timestamp);
+    }
+  }
 
   querySelector(selector: string): Element | null {
     if (this.selectorError !== null) {

@@ -29,7 +29,10 @@ Before preparing a version pull request:
 - use npm CLI 11.15 or newer for staged-package review and approval; the workflow pins npm 11.18.0;
 - confirm the npm organization, maintainer 2FA, and protected `npm` GitHub environment are available.
 
-A release candidate may proceed with issue #25 still open only when its notes describe WebKit/macOS as unconfirmed. Stable `1.0.0` additionally requires every version 1 acceptance gate, including the recorded macOS evidence unless a later accepted decision changes that boundary.
+The WebKit/macOS fixture evidence requested in issue #25 is recorded with its exact platform and
+browser-build boundaries. Stable `1.0.0` still requires every remaining version 1 acceptance gate,
+including the manual application and asset supplement, release-candidate device feedback, and the
+stable publication checks.
 
 ## Create the release tag
 

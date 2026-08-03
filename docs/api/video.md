@@ -93,7 +93,10 @@ Source candidates are ordered. Candidates with a declared `type` are first filte
 `full` is package-managed: the selected candidate is fetched into a `Blob`, an object URL is assigned to the active video, and the original source URL remains visible in state and errors. Immediate bindings prepare every full-preload clip, including inactive clips, without creating hidden video decoders. The assets remain reference-counted until `unload()` or `destroy()`.
 
 > [!WARNING]
-> Full preload may hold the downloaded `Blob`, its object URL, and browser decoder buffers at the same time. This is useful for deterministic clip transitions but can consume substantial memory, especially on mobile devices. Prefer native or on-demand loading when full-file ownership is unnecessary.
+> Full preload owns complete encoded bytes; it does not pre-decode or cache every video frame. It
+> may hold the downloaded `Blob`, its object URL, and browser decoder buffers at the same time. This
+> can consume substantial memory or prevent a practical startup on mobile devices. Prefer native
+> or on-demand loading when full-file ownership is unnecessary.
 
 Binding-level `loading` controls when work starts:
 

@@ -16,7 +16,9 @@ These are regression budgets, not transfer-size promises for a future published 
 ## Loading and memory
 
 - `metadata` is the default native hint and is a reasonable starting point.
-- `full` fetches complete assets into reference-counted blobs; use it only when its deterministic availability is worth transfer and memory cost.
+- `full` fetches complete encoded assets into reference-counted blobs; it does not cache decoded
+  frames. Use it only when deterministic byte availability is worth the transfer and memory cost,
+  and do not treat it as a general mobile-smoothness setting.
 - Viewport, manual, and first-use triggers defer work but may expose a wait at activation.
 - Responsive replacement does not guarantee a smaller transfer if the previous asset was already loaded.
 - Call `unload()` for deliberately dormant media and `destroy()` when the experience ends.
@@ -29,7 +31,16 @@ Avoid application listeners that perform layout writes on every `update`. When U
 
 ## Canvas cost
 
-Canvas bitmap memory and draw cost grow with width, height, and pixel ratio. Prefer a bounded numeric `pixelRatio` over `'device'` on large surfaces when the visual difference is negligible. Resize the CSS layout in application code, then call `refresh()` when automatic observation cannot see the relevant change.
+Canvas bitmap memory and draw cost grow with width, height, and pixel ratio. Prefer a bounded
+numeric `pixelRatio` over `'device'` on large surfaces when the visual difference is negligible.
+Resize the CSS layout in application code, then call `refresh()` when automatic observation cannot
+see the relevant change.
+
+The canvas renderer retains its last successful bitmap during pending seeks and stages the next
+decoded frame before replacing it. Media callbacks remain the primary presentation signal; a
+bounded `requestAnimationFrame()` retry window only bridges pending-frame races. There is no
+permanent canvas render loop, so application code should not add one merely to poll the same decoder
+state.
 
 ## Measure the application
 

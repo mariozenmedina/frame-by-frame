@@ -6,6 +6,7 @@ import type {
   ControllerBindingConfig,
   ControllerCanvasOptions,
 } from '../core/controller-config.js';
+import type { CanvasDrawPlan } from './canvas-layout.js';
 import type { ResolvedCanvasTarget } from './canvas-target.js';
 import type { ResolvedVideoTarget } from './video-target.js';
 import type {
@@ -23,6 +24,9 @@ interface DrawWaiter {
   readonly resolve: () => void;
   readonly reject: (error: FrameByFrameError) => void;
 }
+
+const HAVE_CURRENT_DATA = 2;
+const MAX_PENDING_DRAW_RETRIES = 12;
 
 const initialState = (): VideoRendererState => ({
   loadState: 'idle',
@@ -71,6 +75,34 @@ const resolveDevicePixelRatio = (target: HTMLCanvasElement): number => {
   return typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
 };
 
+const clearOutsideDraw = (
+  context: CanvasRenderingContext2D,
+  plan: CanvasDrawPlan,
+  width: number,
+  height: number,
+): void => {
+  const left = Math.max(0, Math.min(width, plan.destinationX));
+  const top = Math.max(0, Math.min(height, plan.destinationY));
+  const right = Math.max(left, Math.min(width, plan.destinationX + plan.destinationWidth));
+  const bottom = Math.max(top, Math.min(height, plan.destinationY + plan.destinationHeight));
+
+  if (top > 0) {
+    context.clearRect(0, 0, width, top);
+  }
+
+  if (bottom < height) {
+    context.clearRect(0, bottom, width, height - bottom);
+  }
+
+  if (left > 0 && bottom > top) {
+    context.clearRect(0, top, left, bottom - top);
+  }
+
+  if (right < width && bottom > top) {
+    context.clearRect(right, top, width - right, bottom - top);
+  }
+};
+
 class CanvasRenderer implements MediaRenderer {
   #config: ControllerBindingConfig;
   readonly #canvasHandle: ResolvedCanvasTarget;
@@ -78,16 +110,26 @@ class CanvasRenderer implements MediaRenderer {
   readonly #canvas: HTMLCanvasElement;
   readonly #decoder: HTMLVideoElement;
   readonly #context: CanvasRenderingContext2D | null;
+  readonly #buffer: HTMLCanvasElement | null;
+  readonly #bufferContext: CanvasRenderingContext2D | null;
   readonly #onEvent: (event: VideoRendererEvent) => void;
   readonly #drawWaiters = new Set<DrawWaiter>();
   readonly #video: VideoRenderer | null;
   readonly #removeDecoderListeners: () => void;
+  readonly #requestFrame: ((callback: FrameRequestCallback) => number) | null;
+  readonly #cancelFrame: ((handle: number) => void) | null;
 
   #fallbackState = initialState();
   #canvasFailure: FrameByFrameError | null = null;
   #presentedTime: number | null = null;
   #lastDrawSignature: string | null = null;
+  #hasRetainedFrame = false;
+  #outputWidth: number;
+  #outputHeight: number;
   #drawGeneration = 0;
+  #retryHandle: number | null = null;
+  #retryRemaining = 0;
+  #retryToken = 0;
   #activity: VideoRendererActivity;
   #destroyed = false;
 
@@ -106,31 +148,58 @@ class CanvasRenderer implements MediaRenderer {
     this.#decoder = decoderHandle.target;
     this.#onEvent = onEvent;
     this.#activity = activity;
+    this.#outputWidth = this.#canvas.width;
+    this.#outputHeight = this.#canvas.height;
+    const ownerWindow = this.#canvas.ownerDocument.defaultView;
+    const frameHost =
+      typeof ownerWindow?.requestAnimationFrame === 'function' &&
+      typeof ownerWindow.cancelAnimationFrame === 'function'
+        ? ownerWindow
+        : globalThis;
+    this.#requestFrame =
+      typeof frameHost.requestAnimationFrame === 'function'
+        ? frameHost.requestAnimationFrame.bind(frameHost)
+        : null;
+    this.#cancelFrame =
+      typeof frameHost.cancelAnimationFrame === 'function'
+        ? frameHost.cancelAnimationFrame.bind(frameHost)
+        : null;
 
     let context: CanvasRenderingContext2D | null = null;
+    let buffer: HTMLCanvasElement | null = null;
+    let bufferContext: CanvasRenderingContext2D | null = null;
 
     try {
       context = this.#canvas.getContext('2d');
+      buffer = this.#canvas.ownerDocument.createElement('canvas');
+      bufferContext = buffer.getContext('2d');
+
+      if (bufferContext !== null) {
+        buffer.width = 0;
+        buffer.height = 0;
+      }
     } catch (cause) {
       this.#canvasFailure = canvasError(
         'CANVAS_CONTEXT_UNAVAILABLE',
-        'The canvas target could not create a 2D rendering context.',
+        'The canvas renderer could not create its 2D rendering contexts.',
         config.id,
         cause,
       );
     }
 
-    if (context === null && this.#canvasFailure === null) {
+    if ((context === null || bufferContext === null) && this.#canvasFailure === null) {
       this.#canvasFailure = canvasError(
         'CANVAS_CONTEXT_UNAVAILABLE',
-        'The canvas target does not provide a 2D rendering context.',
+        'The canvas renderer does not provide the required 2D rendering contexts.',
         config.id,
       );
     }
 
     this.#context = context;
+    this.#buffer = buffer;
+    this.#bufferContext = bufferContext;
 
-    if (context === null) {
+    if (context === null || bufferContext === null) {
       this.#video = null;
       this.#decoderHandle.release();
       this.#fallbackState = {
@@ -158,20 +227,37 @@ class CanvasRenderer implements MediaRenderer {
       this.#canvas,
     );
 
-    const scheduleFallbackDraw = (): void => {
+    const scheduleFallbackDraw = (allowPendingSeek: boolean): void => {
       const generation = this.#drawGeneration;
       const presentedTime = this.#decoder.currentTime;
       globalThis.queueMicrotask((): void => {
         if (generation === this.#drawGeneration && !this.#destroyed) {
-          this.#drawDecoderFrame(null, null, null, false, presentedTime);
+          const drawn = this.#drawDecoderFrame(
+            null,
+            null,
+            null,
+            false,
+            presentedTime,
+            allowPendingSeek,
+          );
+
+          if (!drawn) {
+            this.#startDrawRetries();
+          }
         }
       });
     };
-    this.#decoder.addEventListener('loadeddata', scheduleFallbackDraw);
-    this.#decoder.addEventListener('seeked', scheduleFallbackDraw);
+    const scheduleLoadedDataDraw = (): void => {
+      scheduleFallbackDraw(false);
+    };
+    const scheduleSeekedDraw = (): void => {
+      scheduleFallbackDraw(true);
+    };
+    this.#decoder.addEventListener('loadeddata', scheduleLoadedDataDraw);
+    this.#decoder.addEventListener('seeked', scheduleSeekedDraw);
     this.#removeDecoderListeners = (): void => {
-      this.#decoder.removeEventListener('loadeddata', scheduleFallbackDraw);
-      this.#decoder.removeEventListener('seeked', scheduleFallbackDraw);
+      this.#decoder.removeEventListener('loadeddata', scheduleLoadedDataDraw);
+      this.#decoder.removeEventListener('seeked', scheduleSeekedDraw);
     };
 
     this.resize();
@@ -212,6 +298,7 @@ class CanvasRenderer implements MediaRenderer {
         }
 
         settled = true;
+        this.#cancelDrawRetries();
         videoTransaction?.commit();
         this.#config = config;
         if (this.#context !== null) {
@@ -240,6 +327,11 @@ class CanvasRenderer implements MediaRenderer {
   setActivity(activity: VideoRendererActivity): void {
     this.#assertNotDestroyed();
     this.#activity = activity;
+
+    if (activity !== 'active') {
+      this.#cancelDrawRetries();
+    }
+
     this.#video?.setActivity(activity);
 
     if (activity === 'active') {
@@ -249,6 +341,11 @@ class CanvasRenderer implements MediaRenderer {
 
   setResolution(resolution: TimelineResolution | null): void {
     this.#assertNotDestroyed();
+
+    if (resolution === null) {
+      this.#cancelDrawRetries();
+    }
+
     this.#video?.setResolution(resolution);
   }
 
@@ -331,6 +428,7 @@ class CanvasRenderer implements MediaRenderer {
 
   unload(): void {
     this.#assertNotDestroyed();
+    this.#cancelDrawRetries();
     ++this.#drawGeneration;
     this.#lastDrawSignature = null;
     this.#presentedTime = null;
@@ -361,25 +459,32 @@ class CanvasRenderer implements MediaRenderer {
       return;
     }
 
-    const width = Math.max(1, Math.round(cssWidth * ratio));
-    const height = Math.max(1, Math.round(cssHeight * ratio));
+    this.#outputWidth = Math.max(1, Math.round(cssWidth * ratio));
+    this.#outputHeight = Math.max(1, Math.round(cssHeight * ratio));
 
-    if (this.#canvas.width !== width) {
-      this.#canvas.width = width;
-    }
+    if (!this.#hasRetainedFrame) {
+      if (this.#canvas.width !== this.#outputWidth) {
+        this.#canvas.width = this.#outputWidth;
+      }
 
-    if (this.#canvas.height !== height) {
-      this.#canvas.height = height;
+      if (this.#canvas.height !== this.#outputHeight) {
+        this.#canvas.height = this.#outputHeight;
+      }
     }
 
     this.#lastDrawSignature = null;
-    this.#drawDecoderFrame(
+    const drawn = this.#drawDecoderFrame(
       null,
       null,
       null,
       true,
       this.#presentedTime ?? this.#decoder.currentTime,
+      false,
     );
+
+    if (!drawn) {
+      this.#startDrawRetries();
+    }
   }
 
   getTarget(): HTMLCanvasElement {
@@ -408,6 +513,7 @@ class CanvasRenderer implements MediaRenderer {
     }
 
     this.#destroyed = true;
+    this.#cancelDrawRetries();
     ++this.#drawGeneration;
     this.#lastDrawSignature = null;
     this.#presentedTime = null;
@@ -418,6 +524,10 @@ class CanvasRenderer implements MediaRenderer {
       presentedTime: null,
       error: null,
     };
+    if (this.#buffer !== null) {
+      this.#buffer.width = 0;
+      this.#buffer.height = 0;
+    }
     this.#removeDecoderListeners();
     this.#rejectDrawWaiters(
       new FrameByFrameError(
@@ -440,17 +550,24 @@ class CanvasRenderer implements MediaRenderer {
 
   #handleVideoEvent(event: VideoRendererEvent): void {
     if (event.type === 'frame') {
-      this.#drawDecoderFrame(
+      const drawn = this.#drawDecoderFrame(
         event.expectedDisplayTime,
         event.width,
         event.height,
         false,
         event.presentedTime,
+        true,
       );
+
+      if (!drawn) {
+        this.#startDrawRetries();
+      }
+
       return;
     }
 
     if (event.type === 'loadstart') {
+      this.#cancelDrawRetries();
       ++this.#drawGeneration;
       this.#lastDrawSignature = null;
       this.#presentedTime = null;
@@ -459,6 +576,10 @@ class CanvasRenderer implements MediaRenderer {
     }
 
     this.#onEvent(event);
+
+    if (event.type === 'seekrequest') {
+      this.#startDrawRetries();
+    }
   }
 
   #drawDecoderFrame(
@@ -467,21 +588,29 @@ class CanvasRenderer implements MediaRenderer {
     observedHeight: number | null,
     force: boolean,
     observedTime: number = this.#decoder.currentTime,
-  ): void {
+    allowPendingSeek = false,
+  ): boolean {
     if (
       this.#destroyed ||
       this.#activity !== 'active' ||
       this.#context === null ||
+      this.#buffer === null ||
+      this.#bufferContext === null ||
       !Number.isFinite(observedTime)
     ) {
-      return;
+      return false;
     }
 
     const state = this.#video?.getState();
     const clipId = state?.activeClipId;
 
-    if (clipId === null || clipId === undefined) {
-      return;
+    if (
+      clipId === null ||
+      clipId === undefined ||
+      this.#decoder.readyState < HAVE_CURRENT_DATA ||
+      (!allowPendingSeek && state?.seeking === true)
+    ) {
+      return false;
     }
 
     const sourceWidth =
@@ -494,14 +623,14 @@ class CanvasRenderer implements MediaRenderer {
     const plan = calculateCanvasDrawPlan(
       sourceWidth,
       sourceHeight,
-      this.#canvas.width,
-      this.#canvas.height,
+      this.#outputWidth,
+      this.#outputHeight,
       options.fit,
       ratio,
     );
 
     if (plan === null) {
-      return;
+      return false;
     }
 
     const signature = JSON.stringify({
@@ -509,31 +638,61 @@ class CanvasRenderer implements MediaRenderer {
       observedTime,
       sourceWidth,
       sourceHeight,
-      width: this.#canvas.width,
-      height: this.#canvas.height,
+      width: this.#outputWidth,
+      height: this.#outputHeight,
       fit: options.fit,
       smoothing: options.imageSmoothingEnabled,
     });
 
     if (!force && signature === this.#lastDrawSignature) {
-      return;
+      this.#cancelDrawRetries();
+      return true;
     }
 
     try {
-      this.#context.imageSmoothingEnabled = options.imageSmoothingEnabled;
-      this.#context.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
-      this.#context.drawImage(
-        this.#decoder,
-        plan.sourceX,
-        plan.sourceY,
-        plan.sourceWidth,
-        plan.sourceHeight,
-        plan.destinationX,
-        plan.destinationY,
-        plan.destinationWidth,
-        plan.destinationHeight,
-      );
+      const requiresResize =
+        this.#canvas.width !== this.#outputWidth || this.#canvas.height !== this.#outputHeight;
+
+      if (requiresResize) {
+        this.#buffer.width = this.#outputWidth;
+        this.#buffer.height = this.#outputHeight;
+        this.#bufferContext.imageSmoothingEnabled = options.imageSmoothingEnabled;
+        this.#bufferContext.clearRect(0, 0, this.#outputWidth, this.#outputHeight);
+        this.#bufferContext.drawImage(
+          this.#decoder,
+          plan.sourceX,
+          plan.sourceY,
+          plan.sourceWidth,
+          plan.sourceHeight,
+          plan.destinationX,
+          plan.destinationY,
+          plan.destinationWidth,
+          plan.destinationHeight,
+        );
+        this.#canvas.width = this.#outputWidth;
+        this.#canvas.height = this.#outputHeight;
+        this.#context.imageSmoothingEnabled = options.imageSmoothingEnabled;
+        this.#context.drawImage(this.#buffer, 0, 0, this.#outputWidth, this.#outputHeight);
+        this.#buffer.width = 0;
+        this.#buffer.height = 0;
+      } else {
+        this.#context.imageSmoothingEnabled = options.imageSmoothingEnabled;
+        this.#context.drawImage(
+          this.#decoder,
+          plan.sourceX,
+          plan.sourceY,
+          plan.sourceWidth,
+          plan.sourceHeight,
+          plan.destinationX,
+          plan.destinationY,
+          plan.destinationWidth,
+          plan.destinationHeight,
+        );
+        clearOutsideDraw(this.#context, plan, this.#outputWidth, this.#outputHeight);
+      }
     } catch (cause) {
+      this.#buffer.width = 0;
+      this.#buffer.height = 0;
       this.#failDraw(
         canvasError(
           isSecurityError(cause) ? 'CANVAS_SECURITY_ERROR' : 'CANVAS_DRAW_FAILED',
@@ -544,11 +703,13 @@ class CanvasRenderer implements MediaRenderer {
           cause,
         ),
       );
-      return;
+      return false;
     }
 
+    this.#cancelDrawRetries();
     this.#canvasFailure = null;
     this.#lastDrawSignature = signature;
+    this.#hasRetainedFrame = true;
     this.#presentedTime = observedTime;
     this.#resolveDrawWaiters();
     this.#onEvent({
@@ -559,9 +720,11 @@ class CanvasRenderer implements MediaRenderer {
       width: sourceWidth,
       height: sourceHeight,
     });
+    return true;
   }
 
   #failDraw(error: FrameByFrameError): void {
+    this.#cancelDrawRetries();
     const shouldEmit = this.#canvasFailure?.code !== error.code;
     this.#canvasFailure = error;
     this.#rejectDrawWaiters(error);
@@ -569,6 +732,70 @@ class CanvasRenderer implements MediaRenderer {
     if (shouldEmit) {
       this.#onEvent({ type: 'error', error });
     }
+  }
+
+  #startDrawRetries(): void {
+    const activeClipId = this.#video?.getState().activeClipId;
+
+    if (
+      this.#destroyed ||
+      this.#activity !== 'active' ||
+      this.#canvasFailure !== null ||
+      this.#requestFrame === null ||
+      this.#cancelFrame === null ||
+      activeClipId === null ||
+      activeClipId === undefined
+    ) {
+      return;
+    }
+
+    this.#cancelDrawRetries();
+    this.#retryRemaining = MAX_PENDING_DRAW_RETRIES;
+    const token = ++this.#retryToken;
+    this.#scheduleDrawRetry(token);
+  }
+
+  #scheduleDrawRetry(token: number): void {
+    if (token !== this.#retryToken || this.#retryRemaining <= 0 || this.#requestFrame === null) {
+      return;
+    }
+
+    this.#retryHandle = this.#requestFrame((): void => {
+      if (
+        token !== this.#retryToken ||
+        this.#destroyed ||
+        this.#activity !== 'active' ||
+        this.#canvasFailure !== null
+      ) {
+        return;
+      }
+
+      this.#retryHandle = null;
+      this.#retryRemaining -= 1;
+      const drawn = this.#drawDecoderFrame(
+        null,
+        null,
+        null,
+        false,
+        this.#decoder.currentTime,
+        false,
+      );
+
+      if (!drawn && token === this.#retryToken) {
+        this.#scheduleDrawRetry(token);
+      }
+    });
+  }
+
+  #cancelDrawRetries(): void {
+    ++this.#retryToken;
+
+    if (this.#retryHandle !== null && this.#cancelFrame !== null) {
+      this.#cancelFrame(this.#retryHandle);
+    }
+
+    this.#retryHandle = null;
+    this.#retryRemaining = 0;
   }
 
   #canvasOptions(): ControllerCanvasOptions {

@@ -78,8 +78,13 @@ const setupRenderer = (options: Readonly<Record<string, unknown>> = {}) => {
   const renderer = createCanvasRenderer(config, canvasHandle, decoderHandle, (event) => {
     events.push(event);
   });
+  const buffer = document.createdCanvases[0];
 
-  return { canvas, config, decoder, events, renderer };
+  if (buffer === undefined) {
+    throw new Error('Expected the canvas renderer to create a drawing buffer.');
+  }
+
+  return { buffer, canvas, config, decoder, document, events, renderer };
 };
 
 describe('canvas renderer', () => {
@@ -128,7 +133,7 @@ describe('canvas renderer', () => {
   });
 
   it('draws the latest decoded frame and resolves readiness after the first draw', async () => {
-    const { canvas, decoder, events, renderer } = setupRenderer({
+    const { buffer, canvas, decoder, events, renderer } = setupRenderer({
       fit: 'cover',
       imageSmoothingEnabled: false,
     });
@@ -137,6 +142,7 @@ describe('canvas renderer', () => {
     decoder.duration = 10;
     decoder.emit('loadedmetadata');
     decoder.emit('loadeddata');
+    decoder.emit('seeked');
     await ready;
 
     expect(canvas.width).toBe(600);
@@ -144,6 +150,7 @@ describe('canvas renderer', () => {
     expect(canvas.context.imageSmoothingEnabled).toBe(false);
     expect(canvas.context.drawCalls).toHaveLength(1);
     expect(canvas.context.drawCalls[0]).toEqual([decoder, 0, 60, 1920, 960, 0, 0, 600, 300]);
+    expect(buffer.context.drawCalls).toHaveLength(0);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'frame',
@@ -213,6 +220,7 @@ describe('canvas renderer', () => {
     decoder.duration = 10;
     decoder.emit('loadedmetadata');
     decoder.emit('loadeddata');
+    decoder.emit('seeked');
     await Promise.resolve();
     const seekCount = decoder.seekAssignments.length;
 
@@ -239,15 +247,87 @@ describe('canvas renderer', () => {
 
     renderer.setResolution(resolution(2));
     expect(decoder.currentTime).toBe(2);
+    const retainedDrawCalls = canvas.context.drawCalls.length;
     canvas.clientWidth = 400;
     canvas.clientHeight = 200;
     renderer.resize();
 
+    expect(canvas.width).toBe(300);
+    expect(canvas.height).toBe(150);
+    expect(canvas.context.drawCalls).toHaveLength(retainedDrawCalls);
     expect(events.filter((event) => event.type === 'frame').at(-1)).toMatchObject({
       type: 'frame',
       presentedTime: 1,
     });
     expect(renderer.getState().presentedTime).toBe(1);
+
+    decoder.emit('seeked');
+    await Promise.resolve();
+    expect(canvas.width).toBe(400);
+    expect(canvas.height).toBe(200);
+    expect(renderer.getState().presentedTime).toBe(2);
+    renderer.destroy();
+  });
+
+  it('coalesces bounded retries without replacing the retained frame while a seek is pending', async () => {
+    const { canvas, decoder, document, renderer } = setupRenderer({ pixelRatio: 1 });
+    renderer.setResolution(resolution(1));
+    decoder.duration = 10;
+    decoder.emit('loadedmetadata');
+
+    expect(document.animationFrames.size).toBe(1);
+
+    for (let index = 0; index < 20; index += 1) {
+      document.flushAnimationFrames(index);
+    }
+
+    expect(document.animationFrames.size).toBe(0);
+    expect(canvas.context.drawCalls).toHaveLength(0);
+
+    decoder.emit('seeked');
+    await Promise.resolve();
+    expect(canvas.context.drawCalls).toHaveLength(1);
+
+    renderer.setResolution(resolution(2));
+    canvas.clientWidth = 400;
+    canvas.clientHeight = 200;
+
+    for (let index = 0; index < 100; index += 1) {
+      renderer.resize();
+    }
+
+    expect(document.animationFrames.size).toBe(1);
+    expect(canvas.width).toBe(300);
+    expect(canvas.height).toBe(150);
+    expect(canvas.context.drawCalls).toHaveLength(1);
+
+    renderer.setActivity('suspended');
+    expect(document.animationFrames.size).toBe(0);
+    expect(document.cancelledAnimationFrames.length).toBeGreaterThan(0);
+    renderer.destroy();
+  });
+
+  it('keeps the last successful bitmap while replacement media has no current data', async () => {
+    const { canvas, decoder, document, renderer } = setupRenderer({ pixelRatio: 1 });
+    renderer.setResolution(resolution(1));
+    decoder.duration = 10;
+    decoder.emit('loadedmetadata');
+    decoder.emit('seeked');
+    await Promise.resolve();
+
+    const retainedDrawCalls = canvas.context.drawCalls.length;
+    decoder.readyState = 1;
+    decoder.emit('loadstart');
+    canvas.clientWidth = 400;
+    canvas.clientHeight = 200;
+    renderer.resize();
+
+    expect(canvas.width).toBe(300);
+    expect(canvas.height).toBe(150);
+    expect(canvas.context.drawCalls).toHaveLength(retainedDrawCalls);
+    expect(document.animationFrames.size).toBe(1);
+    renderer.unload();
+    expect(document.animationFrames.size).toBe(0);
     renderer.destroy();
   });
 
@@ -264,6 +344,7 @@ describe('canvas renderer', () => {
     decoder.emit('loadedmetadata');
     await loaded;
     decoder.emit('loadeddata');
+    decoder.emit('seeked');
     for (let index = 0; index < 5; index += 1) {
       await Promise.resolve();
     }
@@ -350,6 +431,7 @@ describe('canvas renderer', () => {
     decoder.duration = 10;
     decoder.emit('loadedmetadata');
     decoder.emit('loadeddata');
+    decoder.emit('seeked');
     await Promise.resolve();
     const loadCalls = decoder.loadCalls;
     const drawCalls = canvas.context.drawCalls.length;
@@ -408,6 +490,7 @@ describe('canvas renderer', () => {
     decoder.duration = 10;
     decoder.emit('loadedmetadata');
     decoder.emit('loadeddata');
+    decoder.emit('seeked');
 
     await expect(ready).rejects.toMatchObject({ code: 'CANVAS_SECURITY_ERROR' });
     expect(events.find((event) => event.type === 'error')).toMatchObject({
